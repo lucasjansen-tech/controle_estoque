@@ -5,153 +5,128 @@ from modules.database import carregar_dados, salvar_dados
 from modules.logic import calcular_estoque_atual
 
 def renderizar_semed():
-    st.title("🏢 Gestão Central - SEMED Raposa")
-    st.info(f"Painel Administrativo: {st.session_state['usuario_dados']['email']}")
+    # Cabeçalho Clean
+    st.title("🏢 Painel Logístico SEMED")
+    st.caption(f"Usuário: {st.session_state['usuario_dados']['email']} | Gestão Raposa")
 
-    # Organização do Sistema por Abas
-    tab_dash, tab_mov, tab_esc, tab_prod, tab_user = st.tabs([
-        "📊 Dashboard de Saldo", 
-        "🚚 Registrar Movimentação", 
-        "🏫 Escolas", 
-        "📂 Catálogo", 
+    # Menu Lateral para Navegação (Deixa o centro da tela mais limpo)
+    menu = st.sidebar.radio("Navegar por:", [
+        "📊 Dashboard Geral", 
+        "🚚 Movimentar Carga", 
+        "🏫 Gestão de Unidades", 
+        "📂 Catálogo de Itens",
         "👥 Usuários"
     ])
 
-    # --- ABA 1: DASHBOARD DE SALDO (O QUE TEM NO ESTOQUE AGORA) ---
-    with tab_dash:
-        st.subheader("Consultar Estoque em Tempo Real")
-        df_escolas_list = carregar_dados("db_escolas")
+    st.sidebar.divider()
+    if st.sidebar.button("🔄 Sincronizar Dados"):
+        st.cache_data.clear()
+        st.rerun()
+
+    # --- 1. DASHBOARD GERAL ---
+    if menu == "📊 Dashboard Geral":
+        st.subheader("Situação do Estoque em Tempo Real")
         
-        # Seletor para ver estoque da SEMED ou de uma Escola específica
-        local_selecionado = st.selectbox(
-            "Selecione o local para verificar o saldo:", 
-            ["SEMED"] + df_escolas_list['ID_Escola'].tolist() if not df_escolas_list.empty else ["SEMED"]
-        )
+        df_escolas = carregar_dados("db_escolas")
         
-        saldo = calcular_estoque_atual(local_selecionado)
+        # Filtro de local simplificado
+        opcoes_local = ["SEMED"] + (df_escolas['ID_Escola'].tolist() if not df_escolas.empty else [])
+        local = st.selectbox("Filtrar Estoque por Local:", opcoes_local)
+        
+        saldo = calcular_estoque_atual(local)
         
         if not saldo.empty:
-            df_catalogo = carregar_dados("db_produtos")
-            # Une o saldo com o catálogo para mostrar o nome do produto
-            df_final = pd.merge(saldo, df_catalogo, on='ID_Produto', how='left')
-            st.write(f"### Saldo atual em: **{local_selecionado}**")
-            st.dataframe(df_final[['Nome_Produto', 'Saldo', 'Unidade', 'Categoria']], use_container_width=True)
+            df_cat = carregar_dados("db_catalogo") # Nome corrigido conforme imagem
+            df_final = pd.merge(saldo, df_cat, on='ID_Produto', how='left')
+            
+            # Mostra o saldo de forma organizada
+            st.dataframe(
+                df_final[['Nome_Produto', 'Saldo', 'Unidade', 'Categoria']], 
+                use_container_width=True,
+                hide_index=True
+            )
         else:
-            st.warning("Nenhuma movimentação encontrada para este local.")
+            st.info(f"Sem movimentações registradas para {local} até o momento.")
 
-    # --- ABA 2: REGISTRAR MOVIMENTAÇÃO (AÇÕES DE ENTREGA E AGRICULTURA) ---
-    with tab_mov:
-        st.subheader("📦 Lançar Entrada ou Saída de Material")
+    # --- 2. MOVIMENTAR CARGA (ENTRADAS / AGRICULTURA / TRANSFERÊNCIAS) ---
+    elif menu == "🚚 Movimentar Carga":
+        st.subheader("Registro de Entradas e Saídas")
         
-        df_prod = carregar_dados("db_produtos")
+        df_cat = carregar_dados("db_catalogo")
         df_esc = carregar_dados("db_escolas")
         
-        with st.form("fluxo_estoque"):
-            col1, col2 = st.columns(2)
-            
-            with col1:
-                origem_tipo = st.selectbox("Origem do Material", [
-                    "Agricultura Familiar (Direto na Escola)", 
-                    "Fornecedor Terceirizado", 
-                    "Estoque Central SEMED (Transferência)"
-                ])
-                produto_nome = st.selectbox("Item", df_prod['Nome_Produto'].tolist() if not df_prod.empty else [])
-                qtd = st.number_input("Quantidade", min_value=1)
-                
-            with col2:
-                destino_nome = st.selectbox("Destino da Entrega", ["SEMED"] + df_esc['Nome_Escola'].tolist() if not df_esc.empty else ["SEMED"])
-                doc_ref = st.text_input("Documento de Referência (Nº Nota/Guia/Foto)")
-                data_manual = st.date_input("Data do Recebimento", datetime.now())
-
-            if st.form_submit_button("Confirmar Registro"):
-                # Busca IDs necessários
-                id_p = df_prod[df_prod['Nome_Produto'] == produto_nome]['ID_Produto'].values[0]
-                id_dest = "SEMED" if destino_nome == "SEMED" else df_esc[df_esc['Nome_Escola'] == destino_nome]['ID_Escola'].values[0]
-                
-                # Define se é entrada (aumenta estoque) ou saída (diminui)
-                # Para seu banco, ID_Escola é o local onde o estoque está sendo alterado
-                tipo_mov = "ENTRADA" if "Agricultura" in origem_tipo or "Fornecedor" in origem_tipo else "TRANSFERÊNCIA"
-
-                nova_mov = pd.DataFrame([[
-                    f"MOV-{datetime.now().strftime('%y%m%d%H%M%S')}",
-                    data_manual.strftime('%Y-%m-%d %H:%M:%S'),
-                    id_dest,
-                    tipo_mov,
-                    id_p,
-                    qtd,
-                    st.session_state['usuario_dados']['email'],
-                    doc_ref
-                ]], columns=['ID_Movimentacao', 'Data_Hora', 'ID_Escola', 'Tipo', 'ID_Produto', 'Quantidade_Movimentada', 'ID_Usuario', 'Documento_Ref'])
-                
-                if salvar_dados(nova_mov, "db_movimentacoes", modo='append'):
-                    st.success("Movimentação registrada com sucesso!")
-                    st.rerun()
-
-    # --- ABA 3: GESTÃO DE ESCOLAS (INDIVIDUAL E LOTE) ---
-    with tab_esc:
-        st.subheader("Gerenciar Unidades Escolares")
-        with st.expander("➕ Cadastrar/Importar Escolas"):
+        with st.form("form_mov", clear_on_submit=True):
             c1, c2 = st.columns(2)
             with c1:
-                with st.form("add_esc"):
-                    id_e = st.text_input("Código/ID")
-                    nome_e = st.text_input("Nome da Escola")
-                    tipo_e = st.selectbox("Tipo", ["Creche", "Fundamental", "EJA", "Outros"])
-                    if st.form_submit_button("Salvar"):
-                        salvar_dados(pd.DataFrame([[id_e, nome_e, tipo_e]], columns=['ID_Escola', 'Nome_Escola', 'Tipo']), "db_escolas")
-                        st.rerun()
+                tipo_o = st.selectbox("Origem", ["Fornecedor", "Agricultura Familiar", "SEMED"])
+                item = st.selectbox("Produto", df_cat['Nome_Produto'].tolist() if not df_cat.empty else [])
+                qtd = st.number_input("Quantidade", min_value=0.1, step=1.0)
+            
             with c2:
-                file_esc = st.file_uploader("Importar Lote (Excel/CSV)", type=['xlsx', 'csv'], key="f_esc")
-                if file_esc and st.button("Carregar Lote Escolas"):
-                    df_lote = pd.read_csv(file_esc) if file_esc.name.endswith('csv') else pd.read_excel(file_esc)
-                    salvar_dados(df_lote, "db_escolas", modo='append')
+                destino = st.selectbox("Destino", ["SEMED"] + (df_esc['Nome_Escola'].tolist() if not df_esc.empty else []))
+                doc = st.text_input("Documento/Nota Ref.")
+                data_mov = st.date_input("Data do Recebimento", datetime.now())
+
+            if st.form_submit_button("Lançar no Sistema"):
+                # Captura IDs
+                id_p = df_cat[df_cat['Nome_Produto'] == item]['ID_Produto'].values[0]
+                id_e = "SEMED" if destino == "SEMED" else df_esc[df_esc['Nome_Escola'] == destino]['ID_Escola'].values[0]
+                
+                # Regra de negócio: Agricultura/Fornecedor = ENTRADA. SEMED enviando = TRANSFERÊNCIA.
+                fluxo = "ENTRADA" if tipo_o != "SEMED" else "TRANSFERÊNCIA"
+                
+                nova_mov = pd.DataFrame([[
+                    f"MOV-{datetime.now().strftime('%y%m%d%H%M%S')}",
+                    data_mov.strftime('%d/%m/%Y'),
+                    id_e,     # Coluna ID_Escola
+                    fluxo,    # Coluna Tipo_Fluxo
+                    tipo_o,   # Coluna Origem
+                    destino,  # Coluna Destino
+                    id_p,     # Coluna ID_Produto
+                    qtd,      # Coluna Quantidade
+                    st.session_state['usuario_dados']['email'],
+                    doc
+                ]], columns=['ID_Movimentacao', 'Data_Hora', 'ID_Escola', 'Tipo_Fluxo', 'Origem', 'Destino', 'ID_Produto', 'Quantidade', 'ID_Usuario', 'Documento_Ref'])
+                
+                if salvar_dados(nova_mov, "db_movimentacoes"):
+                    st.success("Movimentação registrada!")
                     st.rerun()
 
-        df_esc_view = carregar_dados("db_escolas")
-        if not df_esc_view.empty:
-            df_edit = st.data_editor(df_esc_view, num_rows="dynamic", use_container_width=True)
-            if st.button("Salvar Alterações nas Escolas"):
-                salvar_dados(df_edit, "db_escolas", modo='overwrite')
-                st.rerun()
-
-    # --- ABA 4: CATÁLOGO DE PRODUTOS ---
-    with tab_prod:
-        st.subheader("Gerenciar Itens do Catálogo")
-        with st.expander("➕ Adicionar Produtos"):
-            with st.form("add_prod"):
-                colp1, colp2 = st.columns(2)
-                id_p = colp1.text_input("ID Produto")
-                nome_p = colp1.text_input("Nome do Item")
-                cat_p = colp2.selectbox("Categoria", ["Alimentação", "Limpeza", "Expediente", "Pedagógico"])
-                uni_p = colp2.selectbox("Unidade", ["Unid", "Kg", "Litro", "Cx", "Pct"])
-                if st.form_submit_button("Cadastrar Item"):
-                    salvar_dados(pd.DataFrame([[id_p, nome_p, cat_p, uni_p]], columns=['ID_Produto', 'Nome_Produto', 'Categoria', 'Unidade']), "db_produtos")
+    # --- 3. GESTÃO DE UNIDADES ---
+    elif menu == "🏫 Gestão de Unidades":
+        st.subheader("Cadastro de Escolas")
+        df_e = carregar_dados("db_escolas")
+        
+        with st.expander("➕ Adicionar Nova Escola"):
+            with st.form("f_add_esc"):
+                id_esc = st.text_input("Código ID")
+                nome_esc = st.text_input("Nome da Escola")
+                if st.form_submit_button("Cadastrar"):
+                    salvar_dados(pd.DataFrame([[id_esc, nome_esc]], columns=['ID_Escola', 'Nome_Escola']), "db_escolas")
                     st.rerun()
+        
+        st.data_editor(df_e, use_container_width=True, hide_index=True)
 
-        df_prod_view = carregar_dados("db_produtos")
-        if not df_prod_view.empty:
-            df_p_edit = st.data_editor(df_prod_view, num_rows="dynamic", use_container_width=True)
-            if st.button("Salvar Alterações no Catálogo"):
-                salvar_dados(df_p_edit, "db_produtos", modo='overwrite')
-                st.rerun()
-
-    # --- ABA 5: GESTÃO DE USUÁRIOS ---
-    with tab_user:
-        st.subheader("Controle de Acesso")
-        with st.expander("➕ Novo Usuário"):
-            with st.form("add_user"):
-                email_u = st.text_input("E-mail")
-                pass_u = st.text_input("Senha")
-                perf_u = st.selectbox("Perfil", ["SEMED", "Escola"])
-                id_esc_u = st.selectbox("Vínculo", ["SEMED"] + df_escolas_list['ID_Escola'].tolist() if not df_escolas_list.empty else ["SEMED"])
-                if st.form_submit_button("Criar Usuário"):
-                    id_u = f"USR-{email_u.split('@')[0].upper()}"
-                    salvar_dados(pd.DataFrame([[id_u, email_u, pass_u, perf_u, id_esc_u]], columns=['ID_Usuario', 'Email', 'Senha_Hash', 'Perfil', 'ID_Escola']), "db_usuarios")
+    # --- 4. CATÁLOGO DE ITENS ---
+    elif menu == "📂 Catálogo de Itens":
+        st.subheader("Itens Cadastrados")
+        df_c = carregar_dados("db_catalogo")
+        
+        with st.expander("➕ Adicionar ao Catálogo"):
+            with st.form("f_add_cat"):
+                c1, c2 = st.columns(2)
+                id_i = c1.text_input("ID Item")
+                nome_i = c1.text_input("Nome do Produto")
+                cat_i = c2.selectbox("Categoria", ["Limpeza", "Alimentação", "Expediente"])
+                un_i = c2.selectbox("Unidade", ["Unid", "Kg", "Cx", "Pct"])
+                if st.form_submit_button("Adicionar"):
+                    salvar_dados(pd.DataFrame([[id_i, nome_i, cat_i, un_i]], columns=['ID_Produto', 'Nome_Produto', 'Categoria', 'Unidade']), "db_catalogo")
                     st.rerun()
+        
+        st.data_editor(df_c, use_container_width=True, hide_index=True)
 
-        df_user_view = carregar_dados("db_usuarios")
-        if not df_user_view.empty:
-            df_u_edit = st.data_editor(df_user_view, num_rows="dynamic", use_container_width=True)
-            if st.button("Salvar Alterações de Usuários"):
-                salvar_dados(df_u_edit, "db_usuarios", modo='overwrite')
-                st.rerun()
+    # --- 5. USUÁRIOS ---
+    elif menu == "👥 Usuários":
+        st.subheader("Gerenciar Acessos")
+        df_u = carregar_dados("db_usuarios")
+        st.data_editor(df_u, use_container_width=True, hide_index=True)

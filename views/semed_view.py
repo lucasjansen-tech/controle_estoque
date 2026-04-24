@@ -6,9 +6,10 @@ from modules.logic import calcular_estoque_atual
 
 def renderizar_semed():
     st.title("🏢 Gestão Central Logística - SEMED")
-    st.caption(f"Acesso: {st.session_state['usuario_dados']['email']}")
+    
+    # Identifica se é o Super Usuário (Dono do Sistema)
+    eh_super_admin = st.session_state['usuario_dados']['id'] == "ROOT"
 
-    # Menu Lateral seguindo estritamente suas abas
     menu = st.sidebar.radio("Navegar por:", [
         "📊 Dashboard de Saldo", 
         "🚚 Movimentar Carga", 
@@ -69,34 +70,40 @@ def renderizar_semed():
                     st.success("Lançamento efetuado!")
                     st.rerun()
 
-    # --- 3. UNIDADES DE ENSINO (Com Carga em Lote e Edição) ---
+    # --- 3. UNIDADES DE ENSINO (Com tipos detalhados e trava de exclusão) ---
     elif menu == "🏫 Unidades de Ensino":
         st.subheader("Gestão de Unidades")
+        tipos_disponiveis = ["Creche", "Ensino Fundamental I", "Ensino Fundamental II", "EJA", "Tempo Integral"]
+        
         col_a, col_b = st.columns(2)
         with col_a:
             with st.expander("➕ Cadastro Individual"):
                 with st.form("f_esc_ind"):
                     id_e = st.text_input("ID Escola")
                     nome_e = st.text_input("Nome da Unidade")
+                    tipos_e = st.multiselect("Tipos de Ensino", tipos_disponiveis)
                     if st.form_submit_button("Salvar Escola"):
-                        salvar_dados(pd.DataFrame([[id_e, nome_e]], columns=['ID_Escola', 'Nome_Escola']), "db_escolas")
+                        tipos_str = ", ".join(tipos_e)
+                        salvar_dados(pd.DataFrame([[id_e, nome_e, tipos_str]], columns=['ID_Escola', 'Nome_Escola', 'Tipo_Escola']), "db_escolas")
                         st.rerun()
         with col_b:
             with st.expander("📥 Importar Escolas em Lote"):
-                arq_e = st.file_uploader("Arquivo CSV/Excel", type=['csv', 'xlsx'], key="u_esc")
+                arq_e = st.file_uploader("Arquivo CSV/Excel (Colunas: ID_Escola, Nome_Escola, Tipo_Escola)", type=['csv', 'xlsx'])
                 if arq_e and st.button("Processar Lote Escolas"):
                     df_l = pd.read_csv(arq_e) if arq_e.name.endswith('csv') else pd.read_excel(arq_e)
                     salvar_dados(df_l, "db_escolas", modo='append')
                     st.rerun()
 
+        st.write("---")
         df_e_view = carregar_dados("db_escolas")
         if not df_e_view.empty:
-            df_e_edit = st.data_editor(df_e_view, num_rows="dynamic", use_container_width=True, hide_index=True)
-            if st.button("💾 Salvar Alterações na Tabela de Escolas"):
+            # Trava: num_rows="dynamic" só é True se for ROOT (permite deletar)
+            df_e_edit = st.data_editor(df_e_view, num_rows="dynamic" if eh_super_admin else "fixed", use_container_width=True, hide_index=True)
+            if st.button("💾 Salvar Alterações / Exclusões (Unidades)"):
                 salvar_dados(df_e_edit, "db_escolas", modo='overwrite')
-                st.success("Dados atualizados!")
+                st.success("Tabela de escolas atualizada!")
 
-    # --- 4. CATÁLOGO DE ITENS (Com Carga em Lote e Edição) ---
+    # --- 4. CATÁLOGO DE ITENS ---
     elif menu == "📂 Catálogo de Itens":
         st.subheader("Gestão de Produtos")
         col_c, col_d = st.columns(2)
@@ -112,7 +119,7 @@ def renderizar_semed():
                         st.rerun()
         with col_d:
             with st.expander("📥 Importar Catálogo em Lote"):
-                arq_p = st.file_uploader("Arquivo CSV/Excel", type=['csv', 'xlsx'], key="u_prod")
+                arq_p = st.file_uploader("Arquivo CSV/Excel", type=['csv', 'xlsx'])
                 if arq_p and st.button("Processar Lote Catálogo"):
                     df_l_p = pd.read_csv(arq_p) if arq_p.name.endswith('csv') else pd.read_excel(arq_p)
                     salvar_dados(df_l_p, "db_catalogo", modo='append')
@@ -120,31 +127,30 @@ def renderizar_semed():
 
         df_c_view = carregar_dados("db_catalogo")
         if not df_c_view.empty:
-            df_c_edit = st.data_editor(df_c_view, num_rows="dynamic", use_container_width=True, hide_index=True)
-            if st.button("💾 Salvar Alterações no Catálogo"):
+            df_c_edit = st.data_editor(df_c_view, num_rows="dynamic" if eh_super_admin else "fixed", use_container_width=True, hide_index=True)
+            if st.button("💾 Salvar Alterações / Exclusões (Catálogo)"):
                 salvar_dados(df_c_edit, "db_catalogo", modo='overwrite')
                 st.success("Catálogo atualizado!")
 
-    # --- 5. GESTÃO DE USUÁRIOS (Unificado) ---
+    # --- 5. GESTÃO DE USUÁRIOS ---
     elif menu == "👥 Gestão de Usuários":
         st.subheader("Controle de Usuários e Funcionários")
         df_esc_list = carregar_dados("db_escolas")
         
-        with st.expander("➕ Criar Novo Acesso (Funcionário ou Admin)"):
+        with st.expander("➕ Criar Novo Acesso"):
             with st.form("f_user_add"):
                 u_email = st.text_input("E-mail")
                 u_pass = st.text_input("Senha")
                 u_perfil = st.selectbox("Perfil", ["SEMED", "Escola"])
-                u_vinculo = st.selectbox("Vínculo (Unidade)", ["SEMED"] + (df_esc_list['ID_Escola'].tolist() if not df_esc_list.empty else []))
+                u_vinculo = st.selectbox("Vínculo (ID Unidade)", ["SEMED"] + (df_esc_list['ID_Escola'].tolist() if not df_esc_list.empty else []))
                 if st.form_submit_button("Gerar Usuário"):
                     id_u = f"USR-{datetime.now().strftime('%H%M%S')}"
-                    # Colunas exatas do seu print: ID_Usuario, Email, Senha_Hash, Perfil, ID_Escola
                     salvar_dados(pd.DataFrame([[id_u, u_email, u_pass, u_perfil, u_vinculo]], columns=['ID_Usuario', 'Email', 'Senha_Hash', 'Perfil', 'ID_Escola']), "db_usuarios")
                     st.rerun()
         
         df_u_view = carregar_dados("db_usuarios")
         if not df_u_view.empty:
-            df_u_edit = st.data_editor(df_u_view, num_rows="dynamic", use_container_width=True, hide_index=True)
-            if st.button("💾 Salvar Alterações em Usuários"):
+            df_u_edit = st.data_editor(df_u_view, num_rows="dynamic" if eh_super_admin else "fixed", use_container_width=True, hide_index=True)
+            if st.button("💾 Salvar Alterações / Exclusões (Usuários)"):
                 salvar_dados(df_u_edit, "db_usuarios", modo='overwrite')
                 st.success("Acessos atualizados!")

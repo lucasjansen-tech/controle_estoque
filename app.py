@@ -1,5 +1,6 @@
 import streamlit as st
-from modules.database import carregar_dados
+from modules.auth import inicializar_sessao, realizar_logout
+from views.login import renderizar_login
 
 # Configurações iniciais da interface
 st.set_page_config(
@@ -8,25 +9,34 @@ st.set_page_config(
     layout="wide"
 )
 
-st.title("📦 Sistema de Gestão de Estoque - Rede Municipal")
-st.subheader("Teste de Integração com Banco de Dados (Google Sheets)")
+# 1. Inicializa a memória da sessão
+inicializar_sessao()
 
-st.info("Tentando realizar a leitura da estrutura das tabelas...")
+# 2. Roteamento (Controle de Fluxo)
+if not st.session_state['autenticado']:
+    # Se NÃO estiver logado, tranca o usuário na tela de login
+    renderizar_login()
 
-# Chamada para carregar a lista de escolas
-df_escolas = carregar_dados("db_escolas")
-
-# Lógica de exibição do teste
-if not df_escolas.empty:
-    st.success("✅ Conexão estabelecida com sucesso!")
-    st.write("Abaixo está a estrutura detectada na aba **db_escolas**:")
-    
-    # Exibe a tabela. Se estiver vazia de dados, mostrará apenas as colunas: 
-    # ID_Escola, Nome_Escola, Tipo
-    st.dataframe(df_escolas, use_container_width=True)
-    
-    st.divider()
-    st.write("Pode prosseguir para a criação do módulo de autenticação.")
 else:
-    st.warning("⚠️ A conexão foi iniciada, mas nenhum dado ou cabeçalho foi retornado.")
-    st.write("Verifique se o nome da planilha e das abas estão idênticos ao código.")
+    # Se ESTIVER logado, monta a estrutura do sistema
+    usuario = st.session_state['usuario_dados']
+    
+    # Monta a barra lateral (Sidebar)
+    st.sidebar.title("Módulo Logístico")
+    st.sidebar.write(f"Logado como: **{usuario['email']}**")
+    st.sidebar.write(f"Nível de Acesso: **{usuario['perfil']}**")
+    st.sidebar.divider()
+    
+    if st.sidebar.button("Sair do Sistema", use_container_width=True):
+        realizar_logout()
+        
+    # Aqui vamos direcionar para a tela correta dependendo de quem logou
+    if usuario['perfil'] == 'SEMED':
+        st.header("🏢 Painel de Controle - Coordenação SEMED")
+        st.write("Bem-vindo! Em breve, os módulos de Gestão de Catálogo, Escolas e Visão Macro aparecerão aqui.")
+        # Futuramente: renderizar_semed()
+        
+    elif usuario['perfil'] == 'Escola':
+        st.header("🏫 Painel da Unidade Escolar")
+        st.write(f"Bem-vindo! Você está gerenciando o estoque da escola ID: {usuario['id_escola']}")
+        # Futuramente: renderizar_escola()

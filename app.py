@@ -31,10 +31,11 @@ else:
         realizar_logout()
         
     # Aqui vamos direcionar para a tela correta dependendo de quem logou
+# No final do arquivo app.py, substitua o bloco 'if usuario['perfil'] == 'SEMED':' por:
+
     if usuario['perfil'] == 'SEMED':
-        st.header("🏢 Painel de Controle - Coordenação SEMED")
-        st.write("Bem-vindo! Em breve, os módulos de Gestão de Catálogo, Escolas e Visão Macro aparecerão aqui.")
-        # Futuramente: renderizar_semed()
+        from views.semed_view import renderizar_semed
+        renderizar_semed()
         
     elif usuario['perfil'] == 'Escola':
         st.header("🏫 Painel da Unidade Escolar")

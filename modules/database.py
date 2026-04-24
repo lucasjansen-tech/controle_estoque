@@ -1,5 +1,6 @@
 import streamlit as st
-from gspread_pandas import Spread, Client
+import gspread
+from gspread_pandas import Spread
 import pandas as pd
 from google.oauth2.service_account import Credentials
 
@@ -17,28 +18,26 @@ def conectar_google_sheets():
     creds_info = st.secrets["gcp_service_account"]
     credentials = Credentials.from_service_account_info(creds_info, scopes=scope)
     
-    # Retorna o cliente autenticado para operações
-    return Client(credentials=credentials)
+    # Usa o gspread base para autorizar e gerar o cliente
+    return gspread.authorize(credentials)
 
 def carregar_dados(aba_nome):
     """
     Acessa a planilha e retorna o conteúdo de uma aba específica.
     Mesmo que a tabela esteja vazia, retorna os cabeçalhos.
     """
-    # Certifique-se de que o nome abaixo é o EXATO nome do arquivo no seu Google Drive
     nome_planilha = "Sistema_Estoque_Raposa" 
     
     try:
         client = conectar_google_sheets()
-        # Inicializa a conexão com a planilha específica
+        
+        # Passa o cliente autenticado para o gspread_pandas
         spread = Spread(nome_planilha, client=client)
         
-        # Converte a aba solicitada para um DataFrame do Pandas
-        # sheet_to_df(index=0) garante que a primeira linha seja o cabeçalho
+        # Converte a aba solicitada para um DataFrame
         df = spread.sheet_to_df(sheet=aba_nome, index=0)
         
         return df
     except Exception as e:
-        # Exibe o erro técnico caso a conexão falhe (ex: erro de chave ou permissão)
         st.error(f"Erro ao carregar a aba '{aba_nome}': {e}")
         return pd.DataFrame()

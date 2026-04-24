@@ -7,7 +7,6 @@ from modules.logic import calcular_estoque_atual
 def renderizar_semed():
     st.title("🏢 Gestão Central Logística - SEMED")
     
-    # Identifica se é o Super Usuário (Dono do Sistema)
     eh_super_admin = st.session_state['usuario_dados']['id'] == "ROOT"
 
     menu = st.sidebar.radio("Navegar por:", [
@@ -19,28 +18,45 @@ def renderizar_semed():
     ])
 
     st.sidebar.divider()
-    if st.sidebar.button("🔄 Sincronizar Google Sheets"):
+    if st.sidebar.button("🔄 Sincronizar Google Sheets", use_container_width=True):
         st.cache_data.clear()
         st.rerun()
 
-    # --- 1. DASHBOARD ---
+    # --- 1. DASHBOARD COM FILTROS ---
     if menu == "📊 Dashboard de Saldo":
-        st.subheader("Consulta de Estoque Real")
+        st.subheader("📊 Consulta de Estoque Real")
+        
         df_escolas = carregar_dados("db_escolas")
-        opcoes = ["SEMED"] + (df_escolas['ID_Escola'].tolist() if not df_escolas.empty else [])
-        local = st.selectbox("Selecione a Unidade:", opcoes)
+        df_cat = carregar_dados("db_catalogo")
+        
+        col_f1, col_f2 = st.columns(2)
+        with col_f1:
+            local = st.selectbox("Unidade:", ["SEMED"] + (df_escolas['ID_Escola'].tolist() if not df_escolas.empty else []))
         
         saldo = calcular_estoque_atual(local)
+        
         if not saldo.empty:
-            df_cat = carregar_dados("db_catalogo")
             df_final = pd.merge(saldo, df_cat, on='ID_Produto', how='left')
-            st.dataframe(df_final[['Nome_Produto', 'Saldo', 'Unidade', 'Categoria']], use_container_width=True, hide_index=True)
+            
+            # Filtros de Visualização
+            with st.expander("🔍 Filtros de Busca"):
+                f_nome = st.text_input("Filtrar por Nome do Produto")
+                f_cat = st.multiselect("Filtrar por Categoria", df_final['Categoria'].unique())
+            
+            # Aplicação dos filtros
+            if f_nome:
+                df_final = df_final[df_final['Nome_Produto'].str.contains(f_nome, case=False, na=False)]
+            if f_cat:
+                df_final = df_final[df_final['Categoria'].isin(f_cat)]
+                
+            st.dataframe(df_final[['ID_Produto', 'Nome_Produto', 'Saldo', 'Unidade', 'Categoria']], 
+                         use_container_width=True, hide_index=True)
         else:
             st.info(f"Nenhum registro de estoque para {local}.")
 
     # --- 2. MOVIMENTAR CARGA ---
     elif menu == "🚚 Movimentar Carga":
-        st.subheader("Registrar Fluxo de Material")
+        st.subheader("🚚 Registrar Fluxo de Material")
         df_cat = carregar_dados("db_catalogo")
         df_esc = carregar_dados("db_escolas")
         
@@ -55,7 +71,7 @@ def renderizar_semed():
                 doc = st.text_input("Nº Documento/Referência")
                 data_m = st.date_input("Data", datetime.now())
 
-            if st.form_submit_button("Confirmar Lançamento"):
+            if st.form_submit_button("Confirmar Lançamento", use_container_width=True):
                 id_p = df_cat[df_cat['Nome_Produto'] == item]['ID_Produto'].values[0]
                 id_dest = "SEMED" if destino == "SEMED" else df_esc[df_esc['Nome_Escola'] == destino]['ID_Escola'].values[0]
                 fluxo = "ENTRADA" if origem_t != "SEMED" else "TRANSFERÊNCIA"
@@ -70,13 +86,13 @@ def renderizar_semed():
                     st.success("Lançamento efetuado!")
                     st.rerun()
 
-    # --- 3. UNIDADES DE ENSINO (Com tipos detalhados e trava de exclusão) ---
+    # --- 3. UNIDADES DE ENSINO COM FILTROS E EDIÇÃO ---
     elif menu == "🏫 Unidades de Ensino":
-        st.subheader("Gestão de Unidades")
+        st.subheader("🏫 Gestão de Unidades")
         tipos_disponiveis = ["Creche", "Ensino Fundamental I", "Ensino Fundamental II", "EJA", "Tempo Integral"]
         
-        col_a, col_b = st.columns(2)
-        with col_a:
+        col_btn1, col_btn2 = st.columns(2)
+        with col_btn1:
             with st.expander("➕ Cadastro Individual"):
                 with st.form("f_esc_ind"):
                     id_e = st.text_input("ID Escola")
@@ -86,55 +102,76 @@ def renderizar_semed():
                         tipos_str = ", ".join(tipos_e)
                         salvar_dados(pd.DataFrame([[id_e, nome_e, tipos_str]], columns=['ID_Escola', 'Nome_Escola', 'Tipo_Escola']), "db_escolas")
                         st.rerun()
-        with col_b:
-            with st.expander("📥 Importar Escolas em Lote"):
-                arq_e = st.file_uploader("Arquivo CSV/Excel (Colunas: ID_Escola, Nome_Escola, Tipo_Escola)", type=['csv', 'xlsx'])
-                if arq_e and st.button("Processar Lote Escolas"):
+        with col_btn2:
+            with st.expander("📥 Importar em Lote"):
+                arq_e = st.file_uploader("Upload CSV/Excel", type=['csv', 'xlsx'])
+                if arq_e and st.button("Processar Lote"):
                     df_l = pd.read_csv(arq_e) if arq_e.name.endswith('csv') else pd.read_excel(arq_e)
                     salvar_dados(df_l, "db_escolas", modo='append')
                     st.rerun()
 
-        st.write("---")
+        st.divider()
         df_e_view = carregar_dados("db_escolas")
+        
         if not df_e_view.empty:
-            # Trava: num_rows="dynamic" só é True se for ROOT (permite deletar)
-            df_e_edit = st.data_editor(df_e_view, num_rows="dynamic" if eh_super_admin else "fixed", use_container_width=True, hide_index=True)
-            if st.button("💾 Salvar Alterações / Exclusões (Unidades)"):
-                salvar_dados(df_e_edit, "db_escolas", modo='overwrite')
-                st.success("Tabela de escolas atualizada!")
+            with st.expander("🔍 Filtros de Visualização"):
+                f_esc_nome = st.text_input("Buscar por Nome da Escola")
+                f_esc_tipo = st.multiselect("Filtrar por Nível", tipos_disponiveis)
+            
+            if f_esc_nome:
+                df_e_view = df_e_view[df_e_view['Nome_Escola'].str.contains(f_esc_nome, case=False, na=False)]
+            if f_esc_tipo:
+                # Filtra se algum dos tipos selecionados está na string de tipos da escola
+                df_e_view = df_e_view[df_e_view['Tipo_Escola'].apply(lambda x: any(t in str(x) for t in f_esc_tipo))]
 
-    # --- 4. CATÁLOGO DE ITENS ---
+            st.write("📝 **Edição Rápida:** Clique nas células para alterar. Use o botão abaixo para confirmar.")
+            df_e_edit = st.data_editor(df_e_view, num_rows="dynamic" if eh_super_admin else "fixed", use_container_width=True, hide_index=True)
+            
+            if st.button("💾 Salvar Alterações na Rede", use_container_width=True):
+                if salvar_dados(df_e_edit, "db_escolas", modo='overwrite'):
+                    st.success("Dados atualizados com sucesso!")
+
+    # --- 4. CATÁLOGO DE ITENS COM FILTROS ---
     elif menu == "📂 Catálogo de Itens":
-        st.subheader("Gestão de Produtos")
-        col_c, col_d = st.columns(2)
-        with col_c:
+        st.subheader("📂 Gestão de Produtos")
+        col_c1, col_c2 = st.columns(2)
+        with col_c1:
             with st.expander("➕ Novo Item Individual"):
                 with st.form("f_prod_ind"):
                     id_p = st.text_input("ID Produto")
                     nome_p = st.text_input("Nome")
-                    cat_p = st.selectbox("Categoria", ["Alimentação", "Limpeza", "Expediente"])
-                    un_p = st.selectbox("Unidade", ["Unid", "Kg", "Cx", "Pct"])
+                    cat_p = st.selectbox("Categoria", ["Alimentação", "Limpeza", "Expediente", "Pedagógico"])
+                    un_p = st.selectbox("Unidade", ["Unid", "Kg", "Cx", "Pct", "Litro"])
                     if st.form_submit_button("Cadastrar Item"):
                         salvar_dados(pd.DataFrame([[id_p, nome_p, cat_p, un_p]], columns=['ID_Produto', 'Nome_Produto', 'Categoria', 'Unidade']), "db_catalogo")
                         st.rerun()
-        with col_d:
-            with st.expander("📥 Importar Catálogo em Lote"):
-                arq_p = st.file_uploader("Arquivo CSV/Excel", type=['csv', 'xlsx'])
-                if arq_p and st.button("Processar Lote Catálogo"):
+        with col_c2:
+            with st.expander("📥 Importar Lote"):
+                arq_p = st.file_uploader("Upload CSV/Excel", type=['csv', 'xlsx'], key="up_cat")
+                if arq_p and st.button("Carregar Produtos"):
                     df_l_p = pd.read_csv(arq_p) if arq_p.name.endswith('csv') else pd.read_excel(arq_p)
                     salvar_dados(df_l_p, "db_catalogo", modo='append')
                     st.rerun()
 
         df_c_view = carregar_dados("db_catalogo")
         if not df_c_view.empty:
-            df_c_edit = st.data_editor(df_c_view, num_rows="dynamic" if eh_super_admin else "fixed", use_container_width=True, hide_index=True)
-            if st.button("💾 Salvar Alterações / Exclusões (Catálogo)"):
-                salvar_dados(df_c_edit, "db_catalogo", modo='overwrite')
-                st.success("Catálogo atualizado!")
+            with st.expander("🔍 Filtros de Catálogo"):
+                f_p_nome = st.text_input("Buscar Produto")
+                f_p_cat = st.multiselect("Categoria Item", df_c_view['Categoria'].unique())
+            
+            if f_p_nome:
+                df_c_view = df_c_view[df_c_view['Nome_Produto'].str.contains(f_p_nome, case=False, na=False)]
+            if f_p_cat:
+                df_c_view = df_c_view[df_c_view['Categoria'].isin(f_p_cat)]
 
-    # --- 5. GESTÃO DE USUÁRIOS ---
+            df_c_edit = st.data_editor(df_c_view, num_rows="dynamic" if eh_super_admin else "fixed", use_container_width=True, hide_index=True)
+            if st.button("💾 Atualizar Catálogo", use_container_width=True):
+                salvar_dados(df_c_edit, "db_catalogo", modo='overwrite')
+                st.success("Catálogo sincronizado!")
+
+    # --- 5. GESTÃO DE USUÁRIOS COM FILTROS ---
     elif menu == "👥 Gestão de Usuários":
-        st.subheader("Controle de Usuários e Funcionários")
+        st.subheader("👥 Controle de Acessos")
         df_esc_list = carregar_dados("db_escolas")
         
         with st.expander("➕ Criar Novo Acesso"):
@@ -150,7 +187,16 @@ def renderizar_semed():
         
         df_u_view = carregar_dados("db_usuarios")
         if not df_u_view.empty:
+            with st.expander("🔍 Filtros de Usuários"):
+                f_u_email = st.text_input("Buscar por E-mail")
+                f_u_perf = st.multiselect("Perfil de Acesso", ["SEMED", "Escola"])
+            
+            if f_u_email:
+                df_u_view = df_u_view[df_u_view['Email'].str.contains(f_u_email, case=False, na=False)]
+            if f_u_perf:
+                df_u_view = df_u_view[df_u_view['Perfil'].isin(f_u_perf)]
+
             df_u_edit = st.data_editor(df_u_view, num_rows="dynamic" if eh_super_admin else "fixed", use_container_width=True, hide_index=True)
-            if st.button("💾 Salvar Alterações / Exclusões (Usuários)"):
+            if st.button("💾 Salvar Alterações de Acessos", use_container_width=True):
                 salvar_dados(df_u_edit, "db_usuarios", modo='overwrite')
-                st.success("Acessos atualizados!")
+                st.success("Lista de usuários atualizada!")

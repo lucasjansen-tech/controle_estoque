@@ -3,69 +3,43 @@ import pandas as pd
 import gspread
 from google.oauth2.service_account import Credentials
 
+# Função interna para não repetir código de login
+def autenticar_gspread():
+    scope = ["https://www.googleapis.com/auth/spreadsheets", "https://www.googleapis.com/auth/drive"]
+    creds_info = st.secrets["gcp_service_account"]
+    credentials = Credentials.from_service_account_info(creds_info, scopes=scope)
+    return gspread.authorize(credentials)
+
+@st.cache_data(ttl=20) # Guarda os dados por 20 segundos para evitar o erro 429
 def carregar_dados(aba_nome):
-    """
-    Lê os dados da planilha usando a biblioteca base gspread e converte para Pandas nativamente.
-    """
     nome_planilha = "Sistema_Estoque_Raposa"
-    scope = [
-        "https://www.googleapis.com/auth/spreadsheets",
-        "https://www.googleapis.com/auth/drive"
-    ]
-
     try:
-        creds_info = st.secrets["gcp_service_account"]
-        credentials = Credentials.from_service_account_info(creds_info, scopes=scope)
-        client = gspread.authorize(credentials)
-
+        client = autenticar_gspread()
         planilha = client.open(nome_planilha)
         aba = planilha.worksheet(aba_nome)
         dados = aba.get_all_values()
-
-        if not dados:
-            return pd.DataFrame()
-
-        headers = dados[0]
-        linhas = dados[1:]
-        df = pd.DataFrame(linhas, columns=headers)
-        return df
-
+        if not dados: return pd.DataFrame()
+        return pd.DataFrame(dados[1:], columns=dados[0])
     except Exception as e:
         st.error(f"Erro ao carregar a aba '{aba_nome}': {e}")
         return pd.DataFrame()
 
-
 def salvar_dados(df_novo, aba_nome, modo='append'):
-    """
-    Salva dados na planilha. 
-    'append' adiciona novas linhas. 
-    'overwrite' substitui tudo (útil para edições em lote).
-    """
     nome_planilha = "Sistema_Estoque_Raposa"
-    scope = [
-        "https://www.googleapis.com/auth/spreadsheets",
-        "https://www.googleapis.com/auth/drive"
-    ]
-    
     try:
-        creds_info = st.secrets["gcp_service_account"]
-        credentials = Credentials.from_service_account_info(creds_info, scopes=scope)
-        client = gspread.authorize(credentials)
-        
+        client = autenticar_gspread()
         planilha = client.open(nome_planilha)
         aba = planilha.worksheet(aba_nome)
         
         if modo == 'append':
-            # Converte DataFrame para lista de listas e ignora o cabeçalho
-            dados = df_novo.values.tolist()
-            aba.append_rows(dados)
-            
+            aba.append_rows(df_novo.values.tolist())
         elif modo == 'overwrite':
-            # Limpa a aba e escreve tudo de novo (cabeçalho + dados)
             aba.clear()
             dados = [df_novo.columns.values.tolist()] + df_novo.values.tolist()
             aba.update('A1', dados)
-            
+        
+        # Limpa o cache para que a próxima leitura já mostre o dado novo
+        st.cache_data.clear()
         return True
     except Exception as e:
         st.error(f"Erro ao salvar na aba '{aba_nome}': {e}")

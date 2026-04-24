@@ -19,18 +19,14 @@ def carregar_dados(aba_nome):
         creds_info = st.secrets["gcp_service_account"]
         credentials = Credentials.from_service_account_info(creds_info, scopes=scope)
 
-        # 2. Inicializa o objeto Spread, dizendo explicitamente para usar 
-        # as credenciais carregadas, ignorando arquivos de configuração locais.
-        # Isso resolve erros como "No client config found".
-        # 'index=0' garante que os cabeçalhos serão lidos da primeira linha.
-        spread = Spread(nome_planilha, creds=credentials, index=0)
+        # 2. Inicializa o objeto Spread com as credenciais (sem o index aqui!)
+        spread = Spread(nome_planilha, creds=credentials)
 
-        # 3. Lê o conteúdo da aba. Isso funcionará com a tabela vazia (com apenas cabeçalhos).
-        # index=0 aqui diz que o Pandas não deve gerar um índice extra.
-        df = spread.sheet_to_df(sheet=aba_nome, index=0)
+        # 3. Lê o conteúdo da aba e transforma em tabela do Pandas
+        # index=None garante que todas as colunas sejam mantidas como dados normais
+        df = spread.sheet_to_df(sheet=aba_nome, index=None)
         
         return df
     except Exception as e:
-        # Se falhar na conexão ou formatação da chave
         st.error(f"Erro ao carregar a aba '{aba_nome}': {e}")
         return pd.DataFrame()

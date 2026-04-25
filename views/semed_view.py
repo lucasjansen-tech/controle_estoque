@@ -1,253 +1,338 @@
 import streamlit as st
 import pandas as pd
-from datetime import datetime
+from datetime import datetime, timedelta
 from modules.database import carregar_dados, salvar_dados
 from modules.logic import calcular_estoque_atual
 
+# Tenta carregar fpdf para o PDF oficial
+try:
+    from fpdf import FPDF
+except ImportError:
+    FPDF = None
+
+def registrar_log(usuario, acao, doc, produto, qtd):
+    """Auditoria de alterações"""
+    log_data = pd.DataFrame([[
+        datetime.now().strftime('%d/%m/%Y %H:%M:%S'),
+        usuario, acao, doc, produto, qtd
+    ]], columns=['Data_Hora', 'Usuario', 'Acao', 'Documento', 'Produto', 'Quantidade'])
+    salvar_dados(log_data, "db_logs", modo='append')
+
 def renderizar_semed():
-    # Identificação de Perfis e Segurança
-    usuario_atual = st.session_state['usuario_dados']
-    eh_super_admin = usuario_atual['id'] == "ROOT"
-    eh_coordenador = usuario_atual['perfil'] == "SEMED"
-
-    st.title("🏢 Gestão Central Logística - SEMED")
-    st.caption(f"Operador: {usuario_atual['email']} | Nível: {usuario_atual['perfil']}")
-
-    # Menu Lateral
-    opcoes_menu = ["📊 Dashboard Geral", "🚚 Movimentar Carga", "🏫 Unidades de Ensino", "📂 Catálogo de Itens", "📜 Relatórios e Auditoria"]
-    if eh_super_admin:
-        opcoes_menu.append("👥 Gestão de Usuários")
-
-    menu = st.sidebar.radio("Navegar por:", opcoes_menu)
-
-    # --- Dicas de Uso na Lateral (UX) ---
-    st.sidebar.divider()
-    if menu == "🚚 Movimentar Carga":
-        st.sidebar.info("""
-        **💡 Dicas de Movimentação:**
-        * **Entrada de Fornecedor:** Use quando o material chega de empresas externas ao depósito central.
-        * **Agricultura Familiar:** Registre a chegada de produtos frescos (ex: Abóbora, Acerola) que vão direto para as escolas[cite: 6, 46].
-        * **Transferência:** Use para registrar a saída de materiais da SEMED para as unidades escolares.
-        * **Documento:** Sempre informe o número da Nota Fiscal ou Guia para fins de auditoria[cite: 44, 87].
-        """)
+    user_data = st.session_state['usuario_dados']
+    perfil_usuario = user_data.get('Perfil', 'COORDENADOR').strip().upper()
     
-    if st.sidebar.button("🔄 Sincronizar Base de Dados", use_container_width=True):
+    df_esc = carregar_dados("db_escolas")
+    df_cat = carregar_dados("db_catalogo")
+    df_mov = carregar_dados("db_movimentacoes")
+
+    # --- CABEÇALHO INSTITUCIONAL DA SEMED ---
+    st.markdown(f"""
+        <div style="background-color:#f8f9fa; padding:20px; border-radius:10px; border-left: 10px solid #004a99; text-align: center;">
+            <h2 style="margin:0; color:#004a99; font-size: 24px; font-weight: bold;">PREFEITURA MUNICIPAL DE RAPOSA</h2>
+            <h2 style="margin:5px 0; color:#004a99; font-size: 24px; font-weight: bold;">SECRETARIA MUNICIPAL DE EDUCAÇÃO - SEMED</h2>
+            <hr style="margin:10px 0;">
+            <h4 style="margin:0; color:#333;">Painel de Gestão e Operação Central</h4>
+            <p style="margin:0; color:#666;"><b>Operador:</b> {user_data['email']} | <b>Acesso:</b> {perfil_usuario}</p>
+        </div>
+    """, unsafe_allow_html=True)
+    st.write("")
+
+    # --- MENU DINÂMICO ---
+    opcoes_menu = [
+        "📊 Visão Geral da Rede", 
+        "🏫 Raio-X por Escola", 
+        "📦 Operação: Receber Materiais",
+        "✏️ Operação: Corrigir Nota",
+        "🍳 Operação: Consumo Escolar",
+        "📜 Relatórios Globais"
+    ]
+    
+    if perfil_usuario == 'ADMIN':
+        opcoes_menu.extend(["⚙️ Gerenciar Catálogo", "🕵️ Auditoria do Sistema"])
+
+    menu = st.sidebar.radio("Navegação SEMED", opcoes_menu)
+
+    st.sidebar.divider()
+    if st.sidebar.button("🔄 Sincronizar Rede", use_container_width=True):
         st.cache_data.clear()
         st.rerun()
 
-    # --- 1. DASHBOARD ---
-    if menu == "📊 Dashboard Geral":
-        st.subheader("📊 Saldo em Tempo Real")
-        df_esc = carregar_dados("db_escolas")
-        df_cat = carregar_dados("db_catalogo")
-        
-        col_f1, col_f2 = st.columns(2)
-        with col_f1:
-            local = st.selectbox("Selecione a Unidade:", ["SEMED"] + (df_esc['ID_Escola'].tolist() if not df_esc.empty else []))
-        
-        saldo = calcular_estoque_atual(local)
-        if not saldo.empty:
-            df_final = pd.merge(saldo, df_cat, on='ID_Produto', how='left')
-            with st.expander("🔍 Filtrar Visualização"):
-                f_n = st.text_input("Buscar Produto")
-                f_c = st.multiselect("Categoria", df_final['Categoria'].unique() if 'Categoria' in df_final.columns else [])
+    # --- 1. VISÃO GERAL DA REDE ---
+    if menu == "📊 Visão Geral da Rede":
+        st.subheader("📊 Indicadores da Rede Municipal")
+        if not df_mov.empty:
+            df_mov['DT_OBJ'] = pd.to_datetime(df_mov['Data_Hora'], dayfirst=True, errors='coerce')
+            dias_filtro = st.selectbox("Período de Análise", ["Últimos 30 dias", "Últimos 7 dias", "Todo o período"])
             
-            if f_n: df_final = df_final[df_final['Nome_Produto'].str.contains(f_n, case=False, na=False)]
-            if f_c: df_final = df_final[df_final['Categoria'].isin(f_c)]
-            st.dataframe(df_final, use_container_width=True, hide_index=True)
-        else:
-            st.info(f"Sem registros para {local}.")
+            df_dash = df_mov.copy()
+            if dias_filtro == "Últimos 30 dias":
+                df_dash = df_dash[df_dash['DT_OBJ'] >= (datetime.now() - timedelta(days=30))]
+            elif dias_filtro == "Últimos 7 dias":
+                df_dash = df_dash[df_dash['DT_OBJ'] >= (datetime.now() - timedelta(days=7))]
 
-    # --- 2. MOVIMENTAR CARGA (UX MELHORADA) ---
-    elif menu == "🚚 Movimentar Carga":
-        st.subheader("🚚 Registro de Entradas e Transferências")
-        st.markdown("""
-        Esta tela registra o fluxo de materiais na rede. Certifique-se de conferir a **Unidade de Medida** no catálogo (kg, maço, unid) antes de confirmar a quantidade[cite: 46, 62].
-        """)
-        
-        df_cat = carregar_dados("db_catalogo")
-        df_esc = carregar_dados("db_escolas")
-        
-        with st.form("form_mov_v3", clear_on_submit=True):
-            c1, c2 = st.columns(2)
-            with c1:
-                origem = st.selectbox(
-                    "Origem", 
-                    ["Fornecedor", "Agricultura Familiar", "SEMED"],
-                    help="Selecione 'Agricultura Familiar' para produtos do contrato PNAE 2026[cite: 6]."
-                )
-                
-                # Exibição do produto com ajuda visual
-                item_sel = st.selectbox(
-                    "Produto", 
-                    df_cat['Nome_Produto'].tolist() if not df_cat.empty else [],
-                    help="Caso o produto não apareça, cadastre-o primeiro no 'Catálogo de Itens'."
-                )
-                
-                qtd = st.number_input(
-                    "Quantidade", 
-                    min_value=0.01, 
-                    format="%.2f",
-                    help="Use ponto para decimais (ex: 10.50 kg)."
-                )
+            c1, c2, c3, c4 = st.columns(4)
+            c1.metric("Escolas Ativas", len(df_esc))
+            c2.metric("Total Lançamentos", len(df_dash))
+            c3.metric("Entradas Registradas", len(df_dash[df_dash['Tipo_Fluxo'] == 'ENTRADA']))
+            c4.metric("Saídas (Consumo)", len(df_dash[df_dash['Tipo_Fluxo'] == 'SAÍDA']))
+
+            st.divider()
+            col_g1, col_g2 = st.columns(2)
             
-            with c2:
-                # Vínculo claro ID - Nome no seletor para precisão total
-                lista_dest = ["SEMED"] + [f"{r['ID_Escola']} - {r['Nome_Escola']}" for _, r in df_esc.iterrows()]
-                destino_sel = st.selectbox(
-                    "Destino", 
-                    lista_dest,
-                    help="Selecione para qual unidade escolar o material está sendo enviado."
-                )
+            with col_g1.container(border=True):
+                st.markdown("**Top 5 Escolas em Consumo**")
+                saidas = df_dash[df_dash['Tipo_Fluxo'] == 'SAÍDA']
+                if not saidas.empty:
+                    top_escolas = saidas.groupby('Destino')['Quantidade'].sum().sort_values(ascending=False).head(5)
+                    st.bar_chart(top_escolas)
+                else: st.info("Sem dados de saída.")
+
+            with col_g2.container(border=True):
+                st.markdown("**Produtos Mais Entregues**")
+                entradas = df_dash[df_dash['Tipo_Fluxo'] == 'ENTRADA']
+                if not entradas.empty:
+                    entradas = pd.merge(entradas, df_cat[['ID_Produto', 'Nome_Produto']], on='ID_Produto')
+                    top_prods = entradas.groupby('Nome_Produto')['Quantidade'].sum().sort_values(ascending=False).head(5)
+                    st.bar_chart(top_prods)
+                else: st.info("Sem dados de entrada.")
+        else: st.warning("Base de movimentações vazia.")
+
+    # --- 2. RAIO-X POR ESCOLA ---
+    elif menu == "🏫 Raio-X por Escola":
+        st.subheader("🏫 Situação Atual do Estoque nas Unidades")
+        escola_alvo = st.selectbox("Selecione a Unidade de Ensino:", df_esc['Nome_Escola'].sort_values().tolist())
+        id_alvo = df_esc[df_esc['Nome_Escola'] == escola_alvo]['ID_Escola'].values[0]
+
+        saldo_esc = calcular_estoque_atual(id_alvo)
+        if not saldo_esc.empty:
+            saldo_esc = pd.merge(saldo_esc, df_cat, on='ID_Produto', how='left')
+            cols = st.columns(3)
+            for idx, row in saldo_esc.iterrows():
+                with cols[idx % 3].container(border=True):
+                    st.markdown(f"### {row['Saldo']}")
+                    st.caption(row['Unidade_Medida'])
+                    st.markdown(f"**{row['Nome_Produto']}**")
+        else: st.info("A unidade selecionada não possui estoque registrado.")
+
+    # --- 3. OPERAÇÃO: RECEBER MATERIAIS (EM NOME DA ESCOLA) ---
+    elif menu == "📦 Operação: Receber Materiais":
+        st.subheader("📦 Registrar Recebimento para uma Unidade")
+        
+        with st.container(border=True):
+            st.markdown("**Dados do Destino e Documento**")
+            escola_alvo = st.selectbox("🏫 Escola que está recebendo:", df_esc['Nome_Escola'].sort_values().tolist())
+            id_alvo = df_esc[df_esc['Nome_Escola'] == escola_alvo]['ID_Escola'].values[0]
+            
+            c1, c2, c3 = st.columns(3)
+            origem = c1.selectbox("Origem", ["SEMED", "Agricultura Familiar", "Fornecedor"])
+            doc_ref = c2.text_input("Nº da Nota / Guia de Remessa")
+            data_r = c3.date_input("Data da Entrega", datetime.now(), format="DD/MM/YYYY")
+
+        st.info("💡 Lançamento centralizado. O estoque será direcionado para a escola selecionada acima.")
+
+        if 'lista_itens_semed' not in st.session_state:
+            st.session_state.lista_itens_semed = [{'id': 0, 'prod': None, 'qtd': 0.0, 'obs': ""}]
+
+        for i, item in enumerate(st.session_state.lista_itens_semed):
+            with st.container(border=True):
+                cp, cq, co, cd = st.columns([2.5, 1, 2, 0.5])
+                p_sel = cp.selectbox(f"Produto {i+1}", [None] + df_cat['Nome_Produto'].sort_values().tolist(), key=f"s_rec_p_{item['id']}")
+                st.session_state.lista_itens_semed[i]['prod'] = p_sel
                 
-                doc = st.text_input(
-                    "Documento/Nota de Ref.",
-                    help="Obrigatório para prestação de contas e auditoria."
-                )
+                unid_lbl = "Qtd"
+                if p_sel: unid_lbl = f"Qtd ({df_cat[df_cat['Nome_Produto'] == p_sel]['Unidade_Medida'].values[0]})"
+
+                st.session_state.lista_itens_semed[i]['qtd'] = cq.number_input(unid_lbl, min_value=0.0, key=f"s_rec_q_{item['id']}")
+                st.session_state.lista_itens_semed[i]['obs'] = co.text_input("Observação", placeholder="Ex: Fardo", key=f"s_rec_o_{item['id']}")
                 
-                # Data com formato brasileiro exibido na label e interno
-                data_m = st.date_input(
-                    "Data do Recebimento", 
-                    datetime.now(),
-                    format="DD/MM/YYYY" # Força o formato visual PT-BR
-                )
+                if len(st.session_state.lista_itens_semed) > 1:
+                    if cd.button("❌", key=f"s_rec_del_{item['id']}"):
+                        st.session_state.lista_itens_semed.pop(i); st.rerun()
 
-            st.markdown("---")
-            if st.form_submit_button("Confirmar Lançamento", use_container_width=True):
-                if not doc:
-                    st.error("O campo 'Documento/Nota de Ref.' é obrigatório.")
-                elif not item_sel:
-                    st.error("Selecione um produto do catálogo.")
-                else:
-                    id_p = df_cat[df_cat['Nome_Produto'] == item_sel]['ID_Produto'].values[0]
-                    id_e = "SEMED" if destino_sel == "SEMED" else destino_sel.split(" - ")[0]
-                    fluxo = "ENTRADA" if origem != "SEMED" else "TRANSFERÊNCIA"
+        if st.button("➕ Adicionar Produto"):
+            st.session_state.lista_itens_semed.append({'id': len(st.session_state.lista_itens_semed)+1, 'prod': None, 'qtd': 0.0, 'obs': ""})
+            st.rerun()
+
+        if st.button("✅ SALVAR DISTRIBUIÇÃO", type="primary", use_container_width=True):
+            if doc_ref:
+                lista_s = []
+                t_id = datetime.now().strftime('%y%m%d%H%M%S')
+                for idx, it in enumerate(st.session_state.lista_itens_semed):
+                    if it['prod'] and it['qtd'] > 0:
+                        cat = df_cat[df_cat['Nome_Produto'] == it['prod']].iloc[0]
+                        lista_s.append([f"MOV-{t_id}-{idx}", data_r.strftime('%d/%m/%Y'), id_alvo, "ENTRADA", origem, escola_alvo, cat['ID_Produto'], it['qtd'], cat['Unidade_Medida'], it['obs'], user_data['email'], doc_ref])
+                if salvar_dados(pd.DataFrame(lista_s, columns=['ID_Movimentacao','Data_Hora','ID_Escola','Tipo_Fluxo','Origem','Destino','ID_Produto','Quantidade','Unidade_Medida','Observacao','ID_Usuario','Documento_Ref']), "db_movimentacoes", modo='append'):
+                    st.success(f"Recebimento salvo para {escola_alvo}!")
+                    st.session_state.lista_itens_semed = [{'id': 0, 'prod': None, 'qtd': 0.0, 'obs': ""}]; st.rerun()
+            else: st.error("O número do documento é obrigatório.")
+
+    # --- 4. OPERAÇÃO: CORRIGIR NOTA (EM NOME DA ESCOLA) ---
+    elif menu == "✏️ Operação: Corrigir Nota":
+        st.subheader("✏️ Suporte Técnico: Edição de Lançamentos")
+        
+        escola_alvo = st.selectbox("🏫 Escola Alvo da Correção:", df_esc['Nome_Escola'].sort_values().tolist())
+        id_alvo = df_esc[df_esc['Nome_Escola'] == escola_alvo]['ID_Escola'].values[0]
+        
+        if 'ids_excluir_semed' not in st.session_state: st.session_state.ids_excluir_semed = []
+
+        if not df_mov.empty and 'ID_Escola' in df_mov.columns:
+            minhas = df_mov[df_mov['ID_Escola'] == id_alvo].copy()
+            
+            with st.container(border=True):
+                st.markdown("**🔍 Filtros para Encontrar o Lançamento**")
+                c_f1, c_f2 = st.columns(2)
+                f_data_edit = c_f1.date_input("Filtrar Período", [datetime.now() - timedelta(days=30), datetime.now()], format="DD/MM/YYYY")
+                f_tipo_edit = c_f2.multiselect("Filtrar Tipo", ["ENTRADA", "SAÍDA", "TRANSFERÊNCIA"])
+
+            minhas['Documento_Ref'] = minhas['Documento_Ref'].fillna("S/N").astype(str)
+            minhas['Data_Hora'] = minhas['Data_Hora'].fillna("").astype(str)
+            minhas['ID_Lote'] = minhas['ID_Movimentacao'].astype(str).str.split('-').str[1].fillna("0")
+            minhas['DT_OBJ'] = pd.to_datetime(minhas['Data_Hora'], dayfirst=True, errors='coerce')
+
+            if len(f_data_edit) == 2:
+                minhas = minhas[(minhas['DT_OBJ'].dt.date >= f_data_edit[0]) & (minhas['DT_OBJ'].dt.date <= f_data_edit[1])]
+            if f_tipo_edit: 
+                minhas = minhas[minhas['Tipo_Fluxo'].isin(f_tipo_edit)]
+            
+            if not minhas.empty:
+                minhas['Label'] = "Nota: " + minhas['Documento_Ref'].astype(str) + " (" + minhas['Data_Hora'].astype(str) + ") - Lote: " + minhas['ID_Lote'].astype(str)
+                sel = st.selectbox("Selecione o Lote / Nota:", [None] + sorted(minhas['Label'].unique().tolist(), reverse=True))
+                
+                if sel:
+                    lote_id = sel.split("Lote: ")[1]
+                    itens = minhas[minhas['ID_Lote'] == lote_id].copy()
+                    itens = pd.merge(itens, df_cat[['ID_Produto', 'Nome_Produto']], on='ID_Produto', how='left')
+
+                    trava = st.sidebar.checkbox("🔓 Liberar Exclusão de Itens")
+                    novos_v = []
                     
-                    nova_mov = pd.DataFrame([[
-                        f"MOV-{datetime.now().strftime('%y%m%d%H%M%S')}",
-                        data_m.strftime('%d/%m/%Y'), id_e, fluxo, origem, destino_sel, id_p, qtd,
-                        usuario_atual['email'], doc
-                    ]], columns=['ID_Movimentacao', 'Data_Hora', 'ID_Escola', 'Tipo_Fluxo', 'Origem', 'Destino', 'ID_Produto', 'Quantidade', 'ID_Usuario', 'Documento_Ref'])
-                    
-                    if salvar_dados(nova_mov, "db_movimentacoes"):
-                        st.success(f"✅ Sucesso! {qtd} de {item_sel} registrado para {destino_sel}.")
-                        st.balloons()
-                        st.rerun()
+                    for idx, row in itens.reset_index(drop=True).iterrows():
+                        is_ex = str(row['ID_Movimentacao']) in st.session_state.ids_excluir_semed
+                        with st.container(border=True):
+                            c1, c2, c3 = st.columns([3, 1, 1])
+                            c1.markdown(f"{'<s>' if is_ex else ''}**Item:** {row['Nome_Produto']}{'</s>' if is_ex else ''}", unsafe_allow_html=True)
+                            val_q = c2.number_input(f"Qtd ({row['Unidade_Medida']})", value=float(row['Quantidade']), key=f"s_ed_q_{idx}_{row['ID_Movimentacao']}", disabled=is_ex)
+                            
+                            if trava:
+                                if not is_ex:
+                                    if c3.button("🗑️ Excluir", key=f"s_ex_{idx}"):
+                                        st.session_state.ids_excluir_semed.append(str(row['ID_Movimentacao'])); st.rerun()
+                                else:
+                                    if c3.button("🔄 Manter", key=f"s_un_{idx}"):
+                                        st.session_state.ids_excluir_semed.remove(str(row['ID_Movimentacao'])); st.rerun()
+                            else: c3.write("🔒")
+                            
+                            if not is_ex:
+                                l_up = row.to_dict(); l_up['Quantidade'] = val_q; novos_v.append(l_up)
 
-    # --- 3. UNIDADES DE ENSINO ---
-    elif menu == "🏫 Unidades de Ensino":
-        st.subheader("🏫 Gestão de Escolas")
-        tipos_rede = ["Creche", "Ensino Fundamental I", "Ensino Fundamental II", "EJA", "Tempo Integral"]
-        col_e1, col_e2 = st.columns(2)
-        with col_e1:
-            with st.expander("➕ Nova Unidade Individual"):
-                with st.form("f_esc_new"):
-                    id_e = st.text_input("ID")
-                    nm_e = st.text_input("Nome")
-                    tp_e = st.multiselect("Níveis de Ensino", tipos_rede)
-                    if st.form_submit_button("Salvar"):
-                        salvar_dados(pd.DataFrame([[id_e, nm_e, ", ".join(tp_e)]], columns=['ID_Escola', 'Nome_Escola', 'Tipo_Escola']), "db_escolas")
-                        st.rerun()
-        with col_e2:
-            with st.expander("📥 Importar Escolas em Lote"):
-                arq_e = st.file_uploader("CSV/Excel", type=['csv', 'xlsx'], key="up_esc")
-                if arq_e and st.button("Processar Carga de Escolas"):
-                    df_l = pd.read_csv(arq_e) if arq_e.name.endswith('csv') else pd.read_excel(arq_e)
-                    salvar_dados(df_l, "db_escolas", modo='append')
-                    st.rerun()
-        st.divider()
-        df_view_e = carregar_dados("db_escolas")
-        if not df_view_e.empty:
-            f_esc = st.text_input("🔍 Buscar Escola por Nome/ID")
-            if f_esc: df_view_e = df_view_e[df_view_e['Nome_Escola'].str.contains(f_esc, case=False) | df_view_e['ID_Escola'].str.contains(f_esc, case=False)]
-            edit_e = st.data_editor(df_view_e, num_rows="dynamic" if eh_super_admin else "fixed", use_container_width=True, hide_index=True)
-            if st.button("💾 Aplicar Alterações / Exclusões (Unidades)"):
-                salvar_dados(edit_e, "db_escolas", modo='overwrite')
+                    with st.expander("➕ Adicionar Novo Produto a esta Nota"):
+                        n_p = st.selectbox("Selecione o Produto", [None] + df_cat['Nome_Produto'].tolist())
+                        n_q = st.number_input("Quantidade Inicial", min_value=0.0)
+                        if st.button("Confirmar Inclusão"):
+                            if n_p and n_q > 0:
+                                cat_n = df_cat[df_cat['Nome_Produto'] == n_p].iloc[0]
+                                nova_l = pd.DataFrame([[f"MOV-{lote_id}-ADD{datetime.now().strftime('%S')}", itens.iloc[0]['Data_Hora'], id_alvo, "ENTRADA", itens.iloc[0]['Origem'], escola_alvo, cat_n['ID_Produto'], n_q, cat_n['Unidade_Medida'], "", user_data['email'], itens.iloc[0]['Documento_Ref']]], 
+                                                     columns=['ID_Movimentacao','Data_Hora','ID_Escola','Tipo_Fluxo','Origem','Destino','ID_Produto','Quantidade','Unidade_Medida','Observacao','ID_Usuario','Documento_Ref'])
+                                salvar_dados(pd.concat([carregar_dados("db_movimentacoes"), nova_l]), "db_movimentacoes", modo='overwrite')
+                                registrar_log(user_data['email'], "ADIÇÃO_SUPORTE", itens.iloc[0]['Documento_Ref'], n_p, n_q)
+                                st.success("Adicionado!"); st.rerun()
 
-    # --- 4. CATÁLOGO DE ITENS ---
-    elif menu == "📂 Catálogo de Itens":
-        st.subheader("📂 Catálogo de Produtos e Materiais")
-        col_c1, col_c2 = st.columns(2)
-        with col_c1:
-            with st.expander("➕ Adicionar Item Individual"):
-                with st.form("f_prod_new"):
-                    id_p = st.text_input("ID_Produto")
-                    nm_p = st.text_input("Nome_Produto")
-                    ct_p = st.selectbox("Categoria", ["Alimentação", "Limpeza", "Expediente", "Pedagógico"])
-                    un_p = st.selectbox("Unidade_Medida", ["Unid", "Kg", "Cx", "Pct", "Litro"])
-                    if st.form_submit_button("Cadastrar Item"):
-                        salvar_dados(pd.DataFrame([[id_p, nm_p, ct_p, un_p]], columns=['ID_Produto', 'Nome_Produto', 'Categoria', 'Unidade_Medida']), "db_catalogo")
-                        st.rerun()
-        with col_c2:
-            with st.expander("📥 Importar Catálogo em Lote"):
-                arq_p = st.file_uploader("Arquivo Lote", type=['csv', 'xlsx'], key="up_cat")
-                if arq_p and st.button("Processar Carga de Catálogo"):
-                    df_l_p = pd.read_csv(arq_p) if arq_p.name.endswith('csv') else pd.read_excel(arq_p)
-                    salvar_dados(df_l_p, "db_catalogo", modo='append')
-                    st.rerun()
-        st.divider()
-        df_view_c = carregar_dados("db_catalogo")
-        if not df_view_c.empty:
-            f_prod = st.text_input("🔍 Buscar no Catálogo")
-            if f_prod: df_view_c = df_view_c[df_view_c['Nome_Produto'].str.contains(f_prod, case=False)]
-            edit_c = st.data_editor(df_view_c, num_rows="dynamic" if eh_super_admin else "fixed", use_container_width=True, hide_index=True)
-            if st.button("💾 Aplicar Alterações / Exclusões (Catálogo)"):
-                salvar_dados(edit_c, "db_catalogo", modo='overwrite')
+                    if st.button("💾 SALVAR ALTERAÇÕES", type="primary", use_container_width=True):
+                        df_full = carregar_dados("db_movimentacoes")
+                        ids_nota = [str(x) for x in itens['ID_Movimentacao'].tolist()]
+                        
+                        for mid in st.session_state.ids_excluir_semed:
+                            it_log = itens[itens['ID_Movimentacao'] == mid]
+                            if not it_log.empty: registrar_log(user_data['email'], "EXCLUSÃO_SUPORTE", it_log.iloc[0]['Documento_Ref'], it_log.iloc[0]['Nome_Produto'], it_log.iloc[0]['Quantidade'])
 
-    # --- 5. RELATÓRIOS E AUDITORIA ---
-    elif menu == "📜 Relatórios e Auditoria":
-        st.subheader("📜 Relatórios de Movimentação da Rede")
-        df_mov_geral = carregar_dados("db_movimentacoes")
-        df_escolas_ref = carregar_dados("db_escolas")
-        df_cat_ref = carregar_dados("db_catalogo")
-        if not df_mov_geral.empty:
-            with st.expander("🔍 Filtros de Relatório", expanded=True):
+                        df_r = df_full[~df_full['ID_Movimentacao'].astype(str).isin(ids_nota)]
+                        df_n = pd.DataFrame(novos_v).drop(columns=['Nome_Produto', 'Label', 'ID_Lote', 'DT_OBJ'], errors='ignore')
+                        
+                        if salvar_dados(pd.concat([df_r, df_n]).fillna(""), "db_movimentacoes", modo='overwrite'):
+                            st.session_state.ids_excluir_semed = []; st.success("Nota Atualizada!"); st.rerun()
+            else: st.warning("Nenhum lançamento encontrado nesta escola com os filtros aplicados.")
+        else: st.warning("A base de movimentações está vazia ou inacessível.")
+
+    # --- 5. OPERAÇÃO: CONSUMO ESCOLAR ---
+    elif menu == "🍳 Operação: Consumo Escolar":
+        st.subheader("🍳 Registrar Baixa / Consumo de Escola")
+        escola_alvo = st.selectbox("🏫 Escola Alvo da Baixa:", df_esc['Nome_Escola'].sort_values().tolist())
+        id_alvo = df_esc[df_esc['Nome_Escola'] == escola_alvo]['ID_Escola'].values[0]
+        
+        saldo_df = calcular_estoque_atual(id_alvo)
+        c1, c2 = st.columns(2)
+        p_u = c1.selectbox("Produto Utilizado", df_cat['Nome_Produto'].sort_values().tolist())
+        cat_u = df_cat[df_cat['Nome_Produto'] == p_u].iloc[0]
+        
+        s_item = 0.0
+        if not saldo_df.empty:
+            m = saldo_df[saldo_df['ID_Produto'] == cat_u['ID_Produto']]
+            if not m.empty: s_item = m.iloc[0]['Saldo']
+        
+        c1.info(f"💡 Saldo na {escola_alvo}: **{s_item} {cat_u['Unidade_Medida']}**")
+        q_u = c1.number_input(f"Qtd Baixa ({cat_u['Unidade_Medida']})", min_value=0.01, max_value=float(s_item) if s_item > 0 else 0.01)
+        d_u = c2.date_input("Data do Consumo", datetime.now(), format="DD/MM/YYYY")
+        o_u = c2.text_input("Finalidade / Observação")
+        
+        if st.button("Confirmar Baixa", type="primary", use_container_width=True):
+            if q_u > 0 and q_u <= s_item:
+                df_s = pd.DataFrame([[f"SAI-{datetime.now().strftime('%H%M%S')}", d_u.strftime('%d/%m/%Y'), id_alvo, "SAÍDA", escola_alvo, "CONSUMO INTERNO", cat_u['ID_Produto'], q_u, cat_u['Unidade_Medida'], o_u, user_data['email'], "BAIXA SEMED"]], 
+                                    columns=['ID_Movimentacao','Data_Hora','ID_Escola','Tipo_Fluxo','Origem','Destino','ID_Produto','Quantidade','Unidade_Medida','Observacao','ID_Usuario','Documento_Ref'])
+                salvar_dados(df_s, "db_movimentacoes", modo='append'); st.success("Baixa Executada!"); st.rerun()
+
+    # --- 6. RELATÓRIOS GLOBAIS (TODAS AS ESCOLAS) ---
+    elif menu == "📜 Relatórios Globais":
+        st.subheader("📜 Extrator de Dados da Rede")
+        st.write("Exporte consolidado ou filtre para visualizar notas específicas de toda a rede.")
+        
+        if not df_mov.empty:
+            df_rel = df_mov.copy()
+            df_rel = pd.merge(df_rel, df_cat[['ID_Produto', 'Nome_Produto']], on='ID_Produto', how='left')
+            df_rel['DT_OBJ'] = pd.to_datetime(df_rel['Data_Hora'], dayfirst=True, errors='coerce')
+
+            with st.container(border=True):
                 c1, c2, c3 = st.columns(3)
-                with c1:
-                    f_escola = st.multiselect("Unidade (Destino)", ["SEMED"] + df_escolas_ref['ID_Escola'].tolist())
-                    f_tipo = st.multiselect("Tipo de Fluxo", ["ENTRADA", "SAÍDA", "TRANSFERÊNCIA"])
-                with c2:
-                    f_produto = st.multiselect("Produto", df_cat_ref['Nome_Produto'].tolist())
-                    f_origem = st.multiselect("Origem", ["Agricultura Familiar", "Fornecedor", "SEMED"])
-                with c3:
-                    data_inicio = st.date_input("De:", datetime(2024, 1, 1), format="DD/MM/YYYY")
-                    data_fim = st.date_input("Até:", datetime.now(), format="DD/MM/YYYY")
-            df_mov_geral['Data_Hora_DT'] = pd.to_datetime(df_mov_geral['Data_Hora'], dayfirst=True, errors='coerce')
-            df_filtrado = df_mov_geral.copy()
-            if f_escola: df_filtrado = df_filtrado[df_filtrado['ID_Escola'].isin(f_escola)]
-            if f_tipo: df_filtrado = df_filtrado[df_filtrado['Tipo_Fluxo'].isin(f_tipo)]
-            if f_origem: df_filtrado = df_filtrado[df_filtrado['Origem'].isin(f_origem)]
-            if f_produto:
-                df_filtrado = pd.merge(df_filtrado, df_cat_ref[['ID_Produto', 'Nome_Produto']], on='ID_Produto')
-                df_filtrado = df_filtrado[df_filtrado['Nome_Produto'].isin(f_produto)]
-            df_filtrado = df_filtrado[(df_filtrado['Data_Hora_DT'].dt.date >= data_inicio) & (df_filtrado['Data_Hora_DT'].dt.date <= data_fim)]
-            st.write(f"📝 Foram encontrados **{len(df_filtrado)}** registros.")
-            st.dataframe(df_filtrado.drop(columns=['Data_Hora_DT']), use_container_width=True, hide_index=True)
-            csv = df_filtrado.to_csv(index=False).encode('utf-8-sig')
-            st.download_button(label="📥 Baixar Relatório (Excel/CSV)", data=csv, file_name=f"Relatorio_{datetime.now().strftime('%d_%m_%Y')}.csv", mime='text/csv', use_container_width=True)
-        else:
-            st.warning("Ainda não há registros de movimentação.")
+                f_data = c1.date_input("Período", [datetime.now() - timedelta(days=30), datetime.now()], format="DD/MM/YYYY")
+                f_esc = c2.multiselect("Filtrar Escolas", df_esc['Nome_Escola'].tolist())
+                f_tipo = c3.multiselect("Tipo de Fluxo", ["ENTRADA", "SAÍDA", "TRANSFERÊNCIA"])
 
-    # --- 6. GESTÃO DE USUÁRIOS ---
-    elif menu == "👥 Gestão de Usuários" and eh_super_admin:
-        st.subheader("👥 Gestão de Acessos")
-        df_esc_ref = carregar_dados("db_escolas")
-        with st.expander("➕ Criar Novo Usuário"):
-            with st.form("f_user_new"):
-                u_email = st.text_input("E-mail")
-                u_pass = st.text_input("Senha")
-                u_perf = st.selectbox("Perfil", ["SEMED", "Escola"])
-                lista_vinc = ["SEMED"] + [f"{r['ID_Escola']} - {r['Nome_Escola']}" for _, r in df_esc_ref.iterrows()]
-                u_vinc_sel = st.selectbox("Lotação / Vínculo", lista_vinc)
-                if st.form_submit_button("Gerar Acesso"):
-                    id_vinc = "SEMED" if u_vinc_sel == "SEMED" else u_vinc_sel.split(" - ")[0]
-                    id_u = f"USR-{datetime.now().strftime('%H%M%S')}"
-                    salvar_dados(pd.DataFrame([[id_u, u_email, u_pass, u_perf, id_vinc]], columns=['ID_Usuario', 'Email', 'Senha_Hash', 'Perfil', 'ID_Escola']), "db_usuarios")
-                    st.rerun()
-        df_u_view = carregar_dados("db_usuarios")
-        if not df_u_view.empty:
-            f_user = st.text_input("🔍 Buscar Usuário")
-            if f_user: df_u_view = df_u_view[df_u_view['Email'].str.contains(f_user, case=False)]
-            edit_u = st.data_editor(df_u_view, num_rows="dynamic", use_container_width=True, hide_index=True)
-            if st.button("💾 Atualizar Banco de Usuários"):
-                salvar_dados(edit_u, "db_usuarios", modo='overwrite')
+            if len(f_data) == 2: df_rel = df_rel[(df_rel['DT_OBJ'].dt.date >= f_data[0]) & (df_rel['DT_OBJ'].dt.date <= f_data[1])]
+            if f_tipo: df_rel = df_rel[df_rel['Tipo_Fluxo'].isin(f_tipo)]
+            if f_esc: 
+                ids_filtrados = df_esc[df_esc['Nome_Escola'].isin(f_esc)]['ID_Escola'].tolist()
+                df_rel = df_rel[df_rel['ID_Escola'].isin(ids_filtrados)]
+
+            st.write(f"**Total de Registros Encontrados:** {len(df_rel)}")
+            st.dataframe(df_rel[['Data_Hora', 'Destino', 'Tipo_Fluxo', 'Nome_Produto', 'Quantidade', 'Unidade_Medida', 'Origem', 'Documento_Ref', 'ID_Usuario']], use_container_width=True, hide_index=True)
+            
+            csv = df_rel.drop(columns=['DT_OBJ'], errors='ignore').to_csv(index=False).encode('utf-8-sig')
+            st.download_button("📊 Baixar Excel do Filtro Atual", csv, "Relatorio_Rede_SEMED.csv", use_container_width=True)
+
+    # --- 7. ADMIN: GERENCIAR CATÁLOGO ---
+    elif menu == "⚙️ Gerenciar Catálogo":
+        st.subheader("⚙️ Catálogo Central")
+        st.info("Apenas Administradores podem adicionar produtos.")
+        st.dataframe(df_cat, use_container_width=True, hide_index=True)
+        
+        with st.expander("➕ Adicionar Novo Item à Base"):
+            with st.form("f_add_cat_semed"):
+                c1, c2 = st.columns(2)
+                n_id = c1.text_input("Código do Produto")
+                n_nome = c1.text_input("Nome do Produto")
+                n_cat = c2.selectbox("Categoria", ["Agricultura Familiar", "Alimentação Seca", "Limpeza", "Material Didático"])
+                n_un = c2.selectbox("Unidade", ["Kg", "Unid", "Pct", "Cx", "Saca", "Fardo"])
+                
+                if st.form_submit_button("Inserir no Sistema Geral"):
+                    if n_id and n_nome:
+                        salvar_dados(pd.DataFrame([[n_id, n_nome, n_cat, n_un]], columns=['ID_Produto', 'Nome_Produto', 'Categoria', 'Unidade_Medida']), "db_catalogo", modo='append')
+                        st.success("Catálogo Atualizado!"); st.rerun()
+
+    # --- 8. ADMIN: AUDITORIA ---
+    elif menu == "🕵️ Auditoria do Sistema":
+        st.subheader("🕵️ Logs de Segurança")
+        df_logs = carregar_dados("db_logs")
+        if not df_logs.empty:
+            st.dataframe(df_logs.sort_index(ascending=False), use_container_width=True)
+            st.download_button("📥 Exportar Logs", df_logs.to_csv(index=False).encode('utf-8-sig'), "Auditoria_SEMED.csv")
+        else: st.info("Sem logs de exclusão ou adição forçada registrados.")

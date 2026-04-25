@@ -67,7 +67,7 @@ def renderizar_escola():
                     st.markdown(f"**{row['Nome_Produto']}**")
         else: st.info("Estoque vazio.")
 
-    # --- 2. RECEBER MATERIAIS (COM UNIDADES EXPLÍCITAS E OBSERVAÇÃO) ---
+    # --- 2. RECEBER MATERIAIS ---
     elif menu == "📦 Receber Materiais":
         st.subheader("📦 Nova Entrada de Material")
         with st.container(border=True):
@@ -113,7 +113,7 @@ def renderizar_escola():
                 if salvar_dados(pd.DataFrame(lista_s, columns=['ID_Movimentacao','Data_Hora','ID_Escola','Tipo_Fluxo','Origem','Destino','ID_Produto','Quantidade','Unidade_Medida','Observacao','ID_Usuario','Documento_Ref']), "db_movimentacoes", modo='append'):
                     st.success("Recebimento Salvo!"); st.session_state.lista_itens = [{'id': 0, 'prod': None, 'qtd': 0.0, 'obs': ""}]; st.rerun()
 
-    # --- 3. CORRIGIR/ADICIONAR (COM FILTROS RESTAURADOS E EXCLUSÃO SEGURO) ---
+    # --- 3. CORRIGIR/ADICIONAR EM NOTA ---
     elif menu == "✏️ Corrigir/Adicionar em Nota":
         st.subheader("✏️ Edição Avançada e Filtros")
         df_mov = carregar_dados("db_movimentacoes")
@@ -122,7 +122,6 @@ def renderizar_escola():
         if not df_mov.empty and 'ID_Escola' in df_mov.columns:
             minhas = df_mov[df_mov['ID_Escola'] == id_escola].copy()
             
-            # --- FILTROS DE BUSCA RESTAURADOS ---
             with st.container(border=True):
                 st.markdown("**🔍 Filtros para Encontrar o Lançamento**")
                 c_f1, c_f2 = st.columns(2)
@@ -140,65 +139,68 @@ def renderizar_escola():
             if f_tipo_edit: 
                 minhas = minhas[minhas['Tipo_Fluxo'].isin(f_tipo_edit)]
             
-            minhas['Label'] = "Nota: " + minhas['Documento_Ref'] + " (" + minhas['Data_Hora'] + ") - Lote: " + minhas['ID_Lote']
-            
-            sel = st.selectbox("Selecione o Lote / Nota Encontrada:", [None] + sorted(minhas['Label'].unique().tolist(), reverse=True))
-            
-            if sel:
-                lote_id = sel.split("Lote: ")[1]
-                itens = minhas[minhas['ID_Lote'] == lote_id].copy()
-                itens = pd.merge(itens, df_cat[['ID_Produto', 'Nome_Produto']], on='ID_Produto', how='left')
-
-                trava = st.sidebar.checkbox("🔓 Liberar Exclusão de Itens")
-                novos_v = []
+            # PROTEÇÃO CONTRA O TYPEERROR: Só executa se o dataframe não estiver vazio após os filtros
+            if not minhas.empty:
+                minhas['Label'] = "Nota: " + minhas['Documento_Ref'].astype(str) + " (" + minhas['Data_Hora'].astype(str) + ") - Lote: " + minhas['ID_Lote'].astype(str)
+                sel = st.selectbox("Selecione o Lote / Nota Encontrada:", [None] + sorted(minhas['Label'].unique().tolist(), reverse=True))
                 
-                for idx, row in itens.reset_index(drop=True).iterrows():
-                    is_ex = str(row['ID_Movimentacao']) in st.session_state.ids_excluir
-                    with st.container(border=True):
-                        c1, c2, c3 = st.columns([3, 1, 1])
-                        c1.markdown(f"{'<s>' if is_ex else ''}**Item:** {row['Nome_Produto']}{'</s>' if is_ex else ''}", unsafe_allow_html=True)
-                        val_q = c2.number_input(f"Qtd ({row['Unidade_Medida']})", value=float(row['Quantidade']), key=f"ed_q_{idx}_{row['ID_Movimentacao']}", disabled=is_ex)
-                        
-                        if trava:
+                if sel:
+                    lote_id = sel.split("Lote: ")[1]
+                    itens = minhas[minhas['ID_Lote'] == lote_id].copy()
+                    itens = pd.merge(itens, df_cat[['ID_Produto', 'Nome_Produto']], on='ID_Produto', how='left')
+
+                    trava = st.sidebar.checkbox("🔓 Liberar Exclusão de Itens")
+                    novos_v = []
+                    
+                    for idx, row in itens.reset_index(drop=True).iterrows():
+                        is_ex = str(row['ID_Movimentacao']) in st.session_state.ids_excluir
+                        with st.container(border=True):
+                            c1, c2, c3 = st.columns([3, 1, 1])
+                            c1.markdown(f"{'<s>' if is_ex else ''}**Item:** {row['Nome_Produto']}{'</s>' if is_ex else ''}", unsafe_allow_html=True)
+                            val_q = c2.number_input(f"Qtd ({row['Unidade_Medida']})", value=float(row['Quantidade']), key=f"ed_q_{idx}_{row['ID_Movimentacao']}", disabled=is_ex)
+                            
+                            if trava:
+                                if not is_ex:
+                                    if c3.button("🗑️ Excluir", key=f"ex_{idx}"):
+                                        st.session_state.ids_excluir.append(str(row['ID_Movimentacao'])); st.rerun()
+                                else:
+                                    if c3.button("🔄 Manter", key=f"un_{idx}"):
+                                        st.session_state.ids_excluir.remove(str(row['ID_Movimentacao'])); st.rerun()
+                            else: c3.write("🔒")
+                            
                             if not is_ex:
-                                if c3.button("🗑️ Excluir", key=f"ex_{idx}"):
-                                    st.session_state.ids_excluir.append(str(row['ID_Movimentacao'])); st.rerun()
-                            else:
-                                if c3.button("🔄 Manter", key=f"un_{idx}"):
-                                    st.session_state.ids_excluir.remove(str(row['ID_Movimentacao'])); st.rerun()
-                        else: c3.write("🔒")
+                                l_up = row.to_dict(); l_up['Quantidade'] = val_q; novos_v.append(l_up)
+
+                    with st.expander("➕ Adicionar Novo Produto a esta Nota"):
+                        n_p = st.selectbox("Selecione o Produto", [None] + df_cat['Nome_Produto'].tolist())
+                        n_q = st.number_input("Quantidade Inicial", min_value=0.0)
+                        if st.button("Confirmar Inclusão na Nota"):
+                            if n_p and n_q > 0:
+                                cat_n = df_cat[df_cat['Nome_Produto'] == n_p].iloc[0]
+                                nova_l = pd.DataFrame([[f"MOV-{lote_id}-ADD{datetime.now().strftime('%S')}", itens.iloc[0]['Data_Hora'], id_escola, "ENTRADA", itens.iloc[0]['Origem'], nome_escola, cat_n['ID_Produto'], n_q, cat_n['Unidade_Medida'], "", user_data['email'], itens.iloc[0]['Documento_Ref']]], 
+                                                     columns=['ID_Movimentacao','Data_Hora','ID_Escola','Tipo_Fluxo','Origem','Destino','ID_Produto','Quantidade','Unidade_Medida','Observacao','ID_Usuario','Documento_Ref'])
+                                salvar_dados(pd.concat([carregar_dados("db_movimentacoes"), nova_l]), "db_movimentacoes", modo='overwrite')
+                                registrar_log(user_data['email'], "ADIÇÃO", itens.iloc[0]['Documento_Ref'], n_p, n_q)
+                                st.success("Adicionado!"); st.rerun()
+
+                    if st.button("💾 SALVAR ALTERAÇÕES NESTA NOTA", type="primary", use_container_width=True):
+                        df_full = carregar_dados("db_movimentacoes")
+                        ids_nota = [str(x) for x in itens['ID_Movimentacao'].tolist()]
                         
-                        if not is_ex:
-                            l_up = row.to_dict(); l_up['Quantidade'] = val_q; novos_v.append(l_up)
+                        # LOG DE EXCLUSÕES
+                        for mid in st.session_state.ids_excluir:
+                            it_log = itens[itens['ID_Movimentacao'] == mid]
+                            if not it_log.empty: registrar_log(user_data['email'], "EXCLUSÃO", it_log.iloc[0]['Documento_Ref'], it_log.iloc[0]['Nome_Produto'], it_log.iloc[0]['Quantidade'])
 
-                with st.expander("➕ Adicionar Novo Produto a esta Nota"):
-                    n_p = st.selectbox("Selecione o Produto", [None] + df_cat['Nome_Produto'].tolist())
-                    n_q = st.number_input("Quantidade Inicial", min_value=0.0)
-                    if st.button("Confirmar Inclusão na Nota"):
-                        if n_p and n_q > 0:
-                            cat_n = df_cat[df_cat['Nome_Produto'] == n_p].iloc[0]
-                            nova_l = pd.DataFrame([[f"MOV-{lote_id}-ADD{datetime.now().strftime('%S')}", itens.iloc[0]['Data_Hora'], id_escola, "ENTRADA", itens.iloc[0]['Origem'], nome_escola, cat_n['ID_Produto'], n_q, cat_n['Unidade_Medida'], "", user_data['email'], itens.iloc[0]['Documento_Ref']]], 
-                                                 columns=['ID_Movimentacao','Data_Hora','ID_Escola','Tipo_Fluxo','Origem','Destino','ID_Produto','Quantidade','Unidade_Medida','Observacao','ID_Usuario','Documento_Ref'])
-                            salvar_dados(pd.concat([carregar_dados("db_movimentacoes"), nova_l]), "db_movimentacoes", modo='overwrite')
-                            registrar_log(user_data['email'], "ADIÇÃO", itens.iloc[0]['Documento_Ref'], n_p, n_q)
-                            st.success("Adicionado!"); st.rerun()
+                        df_r = df_full[~df_full['ID_Movimentacao'].astype(str).isin(ids_nota)]
+                        df_n = pd.DataFrame(novos_v).drop(columns=['Nome_Produto', 'Label', 'ID_Lote', 'DT_OBJ'], errors='ignore')
+                        
+                        if salvar_dados(pd.concat([df_r, df_n]).fillna(""), "db_movimentacoes", modo='overwrite'):
+                            st.session_state.ids_excluir = []; st.success("Atualizado com Sucesso!"); st.rerun()
+            else:
+                st.warning("Nenhum lançamento encontrado com os filtros aplicados.")
 
-                if st.button("💾 SALVAR ALTERAÇÕES NESTA NOTA", type="primary", use_container_width=True):
-                    df_full = carregar_dados("db_movimentacoes")
-                    ids_nota = [str(x) for x in itens['ID_Movimentacao'].tolist()]
-                    
-                    # LOG DE EXCLUSÕES
-                    for mid in st.session_state.ids_excluir:
-                        it_log = itens[itens['ID_Movimentacao'] == mid]
-                        if not it_log.empty: registrar_log(user_data['email'], "EXCLUSÃO", it_log.iloc[0]['Documento_Ref'], it_log.iloc[0]['Nome_Produto'], it_log.iloc[0]['Quantidade'])
-
-                    df_r = df_full[~df_full['ID_Movimentacao'].astype(str).isin(ids_nota)]
-                    df_n = pd.DataFrame(novos_v).drop(columns=['Nome_Produto', 'Label', 'ID_Lote', 'DT_OBJ'], errors='ignore')
-                    
-                    if salvar_dados(pd.concat([df_r, df_n]).fillna(""), "db_movimentacoes", modo='overwrite'):
-                        st.session_state.ids_excluir = []; st.success("Atualizado com Sucesso!"); st.rerun()
-
-    # --- 4. REGISTRAR USO (DINÂMICO E SEM FORMULÁRIO) ---
+    # --- 4. REGISTRAR USO (CONSUMO) ---
     elif menu == "🍳 Registrar Uso (Consumo)":
         st.subheader("🍳 Registro de Baixa Diária do Estoque")
         
@@ -223,7 +225,7 @@ def renderizar_escola():
                                     columns=['ID_Movimentacao','Data_Hora','ID_Escola','Tipo_Fluxo','Origem','Destino','ID_Produto','Quantidade','Unidade_Medida','Observacao','ID_Usuario','Documento_Ref'])
                 salvar_dados(df_s, "db_movimentacoes", modo='append'); st.success("Saída Registrada!"); st.rerun()
 
-    # --- 5. RELATÓRIOS OFICIAIS (FILTROS E AGRUPAMENTO MANTIDOS) ---
+    # --- 5. RELATÓRIOS OFICIAIS ---
     elif menu == "📜 Relatórios Oficiais":
         st.subheader("📜 Histórico Consolidado e Filtrado")
         df_m = carregar_dados("db_movimentacoes")
@@ -232,7 +234,6 @@ def renderizar_escola():
             df_m = pd.merge(df_m, df_cat[['ID_Produto', 'Nome_Produto']], on='ID_Produto', how='left')
             df_m['DT_OBJ'] = pd.to_datetime(df_m['Data_Hora'], dayfirst=True, errors='coerce')
             
-            # --- FILTROS DE BUSCA RESTAURADOS ---
             with st.container(border=True):
                 st.markdown("**🔍 Filtros do Relatório**")
                 c1, c2 = st.columns(2)

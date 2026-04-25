@@ -225,7 +225,7 @@ def renderizar_escola():
                                     columns=['ID_Movimentacao','Data_Hora','ID_Escola','Tipo_Fluxo','Origem','Destino','ID_Produto','Quantidade','Unidade_Medida','Observacao','ID_Usuario','Documento_Ref'])
                 salvar_dados(df_s, "db_movimentacoes", modo='append'); st.success("Saída Registrada!"); st.rerun()
 
-    # --- 5. RELATÓRIOS OFICIAIS ---
+# --- 5. RELATÓRIOS OFICIAIS (FILTROS, AGRUPAMENTO, BANNER E PDF) ---
     elif menu == "📜 Relatórios Oficiais":
         st.subheader("📜 Histórico Consolidado e Filtrado")
         df_m = carregar_dados("db_movimentacoes")
@@ -234,6 +234,7 @@ def renderizar_escola():
             df_m = pd.merge(df_m, df_cat[['ID_Produto', 'Nome_Produto']], on='ID_Produto', how='left')
             df_m['DT_OBJ'] = pd.to_datetime(df_m['Data_Hora'], dayfirst=True, errors='coerce')
             
+            # --- FILTROS DE BUSCA ---
             with st.container(border=True):
                 st.markdown("**🔍 Filtros do Relatório**")
                 c1, c2 = st.columns(2)
@@ -263,16 +264,30 @@ def renderizar_escola():
             csv = df_m.drop(columns=['DT_OBJ', 'Lote', 'Nome_Produto'], errors='ignore').to_csv(index=False).encode('utf-8-sig')
             c_d1.download_button("📊 Baixar Excel Detalhado", csv, f"Relatorio_{id_escola}.csv", use_container_width=True)
             
+            # --- GERAÇÃO DO PDF OFICIAL ---
             if FPDF:
                 pdf = FPDF()
                 pdf.add_page()
+                
+                # Inserção do Banner (Tamanho 190 mantém as proporções na margem do A4)
+                try:
+                    # Assume que 'Banner.png' está na mesma pasta raiz de onde o app é executado
+                    pdf.image("Banner.png", x=10, y=10, w=190)
+                    pdf.set_y(50) # Desce o cursor para não escrever em cima da imagem (Ajuste esse valor se a imagem for muito alta/baixa)
+                except Exception:
+                    # Se a imagem não for encontrada, ignora e começa do topo para não travar o app
+                    pdf.set_y(10)
+
+                # Cabeçalho da Hierarquia com fontes do mesmo tamanho
                 pdf.set_font("Arial", 'B', 14)
-                pdf.cell(190, 10, "PREFEITURA MUNICIPAL DE RAPOSA", ln=True, align='C')
-                pdf.set_font("Arial", 'B', 12)
-                pdf.cell(190, 8, "Secretaria Municipal de Educacao - SEMED", ln=True, align='C')
-                pdf.set_font("Arial", '', 10)
-                pdf.cell(190, 7, f"Unidade: {nome_escola}", ln=True, align='C')
-                pdf.ln(5)
+                pdf.cell(190, 8, "PREFEITURA MUNICIPAL DE RAPOSA", ln=True, align='C')
+                pdf.cell(190, 8, "SECRETARIA MUNICIPAL DE EDUCACAO - SEMED", ln=True, align='C')
+                
+                pdf.set_font("Arial", '', 11)
+                pdf.cell(190, 7, f"Controle da Unidade: {nome_escola}", ln=True, align='C')
+                pdf.ln(8)
+                
+                # Listagem agrupada de itens
                 for (lote, doc, data, resp), group in grupos:
                     pdf.set_font("Arial", 'B', 9); pdf.set_fill_color(240, 240, 240)
                     pdf.cell(190, 8, f" NOTA: {doc} | DATA: {data} | RESP: {resp}", 1, 1, 'L', True)
@@ -280,6 +295,8 @@ def renderizar_escola():
                     for _, r in group.iterrows():
                         pdf.cell(90, 6, f" {str(r['Nome_Produto'])[:40]}", 1); pdf.cell(20, 6, f" {r['Quantidade']}", 1); pdf.cell(20, 6, f" {r.get('Unidade_Medida', '')}", 1); pdf.cell(60, 6, f" {str(r.get('Observacao', ''))[:30]}", 1); pdf.ln()
                     pdf.ln(2)
-                c_d2.download_button("📄 Baixar PDF Oficial", pdf.output(dest='S').encode('latin-1'), f"Relatorio_{id_escola}.pdf", "application/pdf", use_container_width=True)
+                
+                pdf_bytes = pdf.output(dest='S').encode('latin-1')
+                c_d2.download_button("📄 Baixar PDF Oficial", pdf_bytes, f"Relatorio_{id_escola}.pdf", "application/pdf", use_container_width=True)
             else:
                 c_d2.warning("Instale 'fpdf' para gerar o PDF.")

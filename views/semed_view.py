@@ -31,7 +31,7 @@ def renderizar_semed():
         df_esc['Tipo_Escola'] = "Polo Fundamental (1º ao 9º Ano)"
         
     if not df_mov.empty and 'Quantidade' in df_mov.columns:
-        # Força a coluna Quantidade a ser tratada como número matemático, não texto (Evita TypeError)
+        # Força a coluna Quantidade a ser número matemático (Evita TypeError)
         df_mov['Quantidade'] = pd.to_numeric(df_mov['Quantidade'], errors='coerce').fillna(0)
 
     # --- CABEÇALHO INSTITUCIONAL ---
@@ -46,8 +46,8 @@ def renderizar_semed():
     """, unsafe_allow_html=True)
     st.write("")
 
-    # --- MENU DINÂMICO (CONTROLE RIGOROSO DE ACESSOS) ---
-    # Opções que o COORDENADOR e todos os outros podem ver:
+    # --- MENU DINÂMICO (CONTROLE RIGOROSO DE ACESSOS CORRIGIDO) ---
+    # Opções que COORDENADORES e perfis SEMED (não-admins) podem ver:
     opcoes_menu = [
         "📊 Visão Geral da Rede", 
         "🏫 Raio-X por Escola", 
@@ -57,8 +57,8 @@ def renderizar_semed():
         "📜 Relatórios Globais"
     ]
     
-    # Opções restritas exclusivas para a alta gestão:
-    if perfil_usuario in ['ADMIN', 'SEMED', 'ADMINISTRADOR']:
+    # Opções restritas EXCLUSIVAS APENAS para ADMIN:
+    if perfil_usuario in ['ADMIN', 'ADMINISTRADOR']:
         opcoes_menu.extend([
             "🏫 Gestão de Unidades",
             "👥 Gestão de Usuários", 
@@ -122,7 +122,6 @@ def renderizar_semed():
                 df_calc['Q_Calc'] = df_calc.apply(lambda r: r['Quantidade'] if r['Tipo_Fluxo'] == 'ENTRADA' else -r['Quantidade'], axis=1)
                 est_global = df_calc.groupby(['ID_Escola', 'ID_Produto'])['Q_Calc'].sum().reset_index()
                 
-                # O erro não ocorrerá mais aqui, pois 'Q_Calc' agora é estritamente numérico
                 est_global = est_global[est_global['Q_Calc'] > 0]
                 
                 if not est_global.empty:
@@ -359,9 +358,7 @@ def renderizar_semed():
                     for _, r in group.iterrows():
                         pdf.cell(90, 6, f" {str(r['Nome_Produto'])[:40]}", 1); pdf.cell(20, 6, f" {r['Quantidade']}", 1); pdf.cell(20, 6, f" {r.get('Unidade_Medida', '')}", 1); pdf.cell(60, 6, f" {str(r.get('Observacao', ''))[:30]}", 1); pdf.ln()
                     pdf.ln(3)
-                c_d2.download_button("📄 Baixar PDF Oficial", pdf.output(dest='S').encode('latin-1'), "Relatorio_SEMED.pdf", "application/pdf", use_container_width=True)
-            else:
-                c_d2.warning("Instale 'fpdf' para gerar o PDF.")
+                c_d2.download_button("📄 Baixar PDF", pdf.output(dest='S').encode('latin-1'), "Relatorio_SEMED.pdf", "application/pdf", use_container_width=True)
 
     # --- 7. ADMIN: GESTÃO DE UNIDADES ---
     elif menu == "🏫 Gestão de Unidades":
@@ -422,7 +419,7 @@ def renderizar_semed():
             st.markdown("**🔍 Filtros Avançados de Usuário**")
             c_f1, c_f2, c_f3 = st.columns(3)
             f_u_nome = c_f1.text_input("Buscar por E-mail")
-            f_u_perfil = c_f2.selectbox("Filtrar Perfil", ["Todos", "ESCOLA", "COORDENADOR", "ADMIN", "SEMED"])
+            f_u_perfil = c_f2.selectbox("Filtrar Perfil", ["Todos", "ESCOLA", "COORDENADOR", "SEMED", "ADMIN"])
             
             escolas_disp = ["Todas"] + df_esc['Nome_Escola'].tolist()
             f_u_esc = c_f3.selectbox("Filtrar Escola Vinculada", escolas_disp)
@@ -459,7 +456,7 @@ def renderizar_semed():
 
         tab_u_add, tab_u_edit = st.tabs(["➕ Cadastrar Usuário", "✏️ Editar Credenciais (Resetar Senha)"])
         lista_escolas_u = ["NENHUMA (Acesso Global)"] + df_esc['ID_Escola'].tolist()
-        perfis_disp = ["ESCOLA", "SEMED", "ADMIN", "COORDENADOR"]
+        perfis_disp = ["ESCOLA", "COORDENADOR", "SEMED", "ADMIN"]
 
         with tab_u_add:
             with st.form("f_new_user"):

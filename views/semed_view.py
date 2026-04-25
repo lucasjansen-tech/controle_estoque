@@ -20,7 +20,10 @@ def registrar_log(usuario, acao, doc, produto, qtd):
 
 def renderizar_semed():
     user_data = st.session_state['usuario_dados']
-    perfil_usuario = user_data.get('Perfil', 'COORDENADOR').strip().upper()
+    
+    # FIX: Busca segura do perfil (aceita minúscula ou maiúscula) e converte para maiúsculo
+    perfil_bruto = user_data.get('perfil', user_data.get('Perfil', 'COORDENADOR'))
+    perfil_usuario = str(perfil_bruto).strip().upper()
     
     df_esc = carregar_dados("db_escolas")
     df_cat = carregar_dados("db_catalogo")
@@ -33,7 +36,7 @@ def renderizar_semed():
             <h2 style="margin:5px 0; color:#004a99; font-size: 24px; font-weight: bold;">SECRETARIA MUNICIPAL DE EDUCAÇÃO - SEMED</h2>
             <hr style="margin:10px 0;">
             <h4 style="margin:0; color:#333;">Painel de Gestão e Operação Central</h4>
-            <p style="margin:0; color:#666;"><b>Operador:</b> {user_data['email']} | <b>Acesso:</b> {perfil_usuario}</p>
+            <p style="margin:0; color:#666;"><b>Operador:</b> {user_data['email']} | <b>Acesso Reconhecido:</b> {perfil_usuario}</p>
         </div>
     """, unsafe_allow_html=True)
     st.write("")
@@ -48,8 +51,8 @@ def renderizar_semed():
         "📜 Relatórios Globais"
     ]
     
-    # Adicionando Gestão de Usuários e outros controles para o Admin
-    if perfil_usuario == 'ADMIN':
+    # FIX: Agora reconhece 'SEMED', 'ADMIN' ou 'ADMINISTRADOR' como acesso total
+    if perfil_usuario in ['ADMIN', 'SEMED', 'ADMINISTRADOR']:
         opcoes_menu.extend([
             "👥 Gestão de Usuários", 
             "⚙️ Gerenciar Catálogo", 
@@ -169,7 +172,7 @@ def renderizar_semed():
                     st.session_state.lista_itens_semed = [{'id': 0, 'prod': None, 'qtd': 0.0, 'obs': ""}]; st.rerun()
             else: st.error("O número do documento é obrigatório.")
 
-    # --- 4. OPERAÇÃO: CORRIGIR NOTA ---
+    # --- 4. OPERAÇÃO: CORRIGIR NOTA (COM PREVENÇÃO DE TYPEERROR) ---
     elif menu == "✏️ Operação: Corrigir Nota":
         st.subheader("✏️ Suporte Técnico: Edição de Lançamentos")
         escola_alvo = st.selectbox("🏫 Escola Alvo da Correção:", df_esc['Nome_Escola'].sort_values().tolist())
@@ -177,14 +180,17 @@ def renderizar_semed():
         
         if 'ids_excluir_semed' not in st.session_state: st.session_state.ids_excluir_semed = []
 
+        df_mov = carregar_dados("db_movimentacoes")
         if not df_mov.empty and 'ID_Escola' in df_mov.columns:
             minhas = df_mov[df_mov['ID_Escola'] == id_alvo].copy()
             
             with st.container(border=True):
+                st.markdown("**🔍 Filtros de Busca**")
                 c_f1, c_f2 = st.columns(2)
                 f_data_edit = c_f1.date_input("Filtrar Período", [datetime.now() - timedelta(days=30), datetime.now()], format="DD/MM/YYYY")
                 f_tipo_edit = c_f2.multiselect("Filtrar Tipo", ["ENTRADA", "SAÍDA", "TRANSFERÊNCIA"])
 
+            # FIX TYPEERROR: Força conversão para string em colunas de junção de texto
             minhas['Documento_Ref'] = minhas['Documento_Ref'].fillna("S/N").astype(str)
             minhas['Data_Hora'] = minhas['Data_Hora'].fillna("").astype(str)
             minhas['ID_Lote'] = minhas['ID_Movimentacao'].astype(str).str.split('-').str[1].fillna("0")
@@ -196,6 +202,7 @@ def renderizar_semed():
                 minhas = minhas[minhas['Tipo_Fluxo'].isin(f_tipo_edit)]
             
             if not minhas.empty:
+                # Concatenação 100% segura blindada contra valores nulos/numéricos
                 minhas['Label'] = "Nota: " + minhas['Documento_Ref'].astype(str) + " (" + minhas['Data_Hora'].astype(str) + ") - Lote: " + minhas['ID_Lote'].astype(str)
                 sel = st.selectbox("Selecione o Lote / Nota:", [None] + sorted(minhas['Label'].unique().tolist(), reverse=True))
                 
@@ -220,8 +227,21 @@ def renderizar_semed():
                                 else:
                                     if c3.button("🔄 Manter", key=f"s_un_{idx}"): st.session_state.ids_excluir_semed.remove(str(row['ID_Movimentacao'])); st.rerun()
                             else: c3.write("🔒")
+                            
                             if not is_ex:
                                 l_up = row.to_dict(); l_up['Quantidade'] = val_q; novos_v.append(l_up)
+
+                    with st.expander("➕ Adicionar Novo Produto a esta Nota"):
+                        n_p = st.selectbox("Selecione o Produto", [None] + df_cat['Nome_Produto'].tolist())
+                        n_q = st.number_input("Quantidade Inicial", min_value=0.0)
+                        if st.button("Confirmar Inclusão"):
+                            if n_p and n_q > 0:
+                                cat_n = df_cat[df_cat['Nome_Produto'] == n_p].iloc[0]
+                                nova_l = pd.DataFrame([[f"MOV-{lote_id}-ADD{datetime.now().strftime('%S')}", itens.iloc[0]['Data_Hora'], id_alvo, "ENTRADA", itens.iloc[0]['Origem'], escola_alvo, cat_n['ID_Produto'], n_q, cat_n['Unidade_Medida'], "", user_data['email'], itens.iloc[0]['Documento_Ref']]], 
+                                                     columns=['ID_Movimentacao','Data_Hora','ID_Escola','Tipo_Fluxo','Origem','Destino','ID_Produto','Quantidade','Unidade_Medida','Observacao','ID_Usuario','Documento_Ref'])
+                                salvar_dados(pd.concat([carregar_dados("db_movimentacoes"), nova_l]), "db_movimentacoes", modo='overwrite')
+                                registrar_log(user_data['email'], "ADIÇÃO_SUPORTE", itens.iloc[0]['Documento_Ref'], n_p, n_q)
+                                st.success("Adicionado!"); st.rerun()
 
                     if st.button("💾 SALVAR ALTERAÇÕES", type="primary", use_container_width=True):
                         df_full = carregar_dados("db_movimentacoes")
@@ -233,8 +253,11 @@ def renderizar_semed():
 
                         df_r = df_full[~df_full['ID_Movimentacao'].astype(str).isin(ids_nota)]
                         df_n = pd.DataFrame(novos_v).drop(columns=['Nome_Produto', 'Label', 'ID_Lote', 'DT_OBJ'], errors='ignore')
+                        
                         if salvar_dados(pd.concat([df_r, df_n]).fillna(""), "db_movimentacoes", modo='overwrite'):
                             st.session_state.ids_excluir_semed = []; st.success("Nota Atualizada!"); st.rerun()
+            else: st.warning("Nenhum lançamento encontrado nesta escola com os filtros aplicados.")
+        else: st.warning("A base de movimentações está vazia ou inacessível.")
 
     # --- 5. OPERAÇÃO: CONSUMO ESCOLAR ---
     elif menu == "🍳 Operação: Consumo Escolar":
@@ -263,10 +286,10 @@ def renderizar_semed():
                                     columns=['ID_Movimentacao','Data_Hora','ID_Escola','Tipo_Fluxo','Origem','Destino','ID_Produto','Quantidade','Unidade_Medida','Observacao','ID_Usuario','Documento_Ref'])
                 salvar_dados(df_s, "db_movimentacoes", modo='append'); st.success("Baixa Executada!"); st.rerun()
 
-    # --- 6. RELATÓRIOS GLOBAIS (ESTRUTURA IDENTICA À DA ESCOLA) ---
+    # --- 6. RELATÓRIOS GLOBAIS ---
     elif menu == "📜 Relatórios Globais":
         st.subheader("📜 Extrator Consolidado de Dados da Rede")
-        
+        df_mov = carregar_dados("db_movimentacoes")
         if not df_mov.empty and 'ID_Escola' in df_mov.columns:
             df_rel = df_mov.copy()
             df_rel = pd.merge(df_rel, df_cat[['ID_Produto', 'Nome_Produto']], on='ID_Produto', how='left')
@@ -276,17 +299,15 @@ def renderizar_semed():
                 st.markdown("**🔍 Filtros do Relatório de Rede**")
                 c1, c2, c3 = st.columns(3)
                 f_data = c1.date_input("Período", [datetime.now() - timedelta(days=30), datetime.now()], format="DD/MM/YYYY")
-                f_esc = c2.multiselect("Filtrar Escolas (Deixe vazio para todas)", df_esc['Nome_Escola'].tolist())
+                f_esc = c2.multiselect("Filtrar Escolas (Vazio = Todas)", df_esc['Nome_Escola'].tolist())
                 f_tipo = c3.multiselect("Tipo de Fluxo", ["ENTRADA", "SAÍDA", "TRANSFERÊNCIA"])
 
-            # Aplicação de Filtros
             if len(f_data) == 2: df_rel = df_rel[(df_rel['DT_OBJ'].dt.date >= f_data[0]) & (df_rel['DT_OBJ'].dt.date <= f_data[1])]
             if f_tipo: df_rel = df_rel[df_rel['Tipo_Fluxo'].isin(f_tipo)]
             if f_esc: 
                 ids_filtrados = df_esc[df_esc['Nome_Escola'].isin(f_esc)]['ID_Escola'].tolist()
                 df_rel = df_rel[df_rel['ID_Escola'].isin(ids_filtrados)]
 
-            # Agrupamento Seguro via Lote (adicionando Destino/Escola para separar notas iguais de escolas diferentes)
             df_rel['Lote'] = df_rel['ID_Movimentacao'].astype(str).str.split('-').str[1].fillna("0")
             grupos = df_rel.sort_values('DT_OBJ', ascending=False).groupby(['Lote', 'Documento_Ref', 'Data_Hora', 'Destino', 'ID_Usuario'], sort=False)
             
@@ -294,29 +315,24 @@ def renderizar_semed():
 
             for (lote, doc, data, destino, resp), group in grupos:
                 with st.container(border=True):
-                    # O Cabeçalho do Bloco agora mostra claramente de qual Escola é a Nota
-                    st.markdown(f"🏫 **Unidade/Destino:** `{destino}`")
-                    st.markdown(f"📄 **Nota/Documento:** `{doc}` | 🗓️ **Data:** {data} | 👤 **Resp:** `{resp}`")
+                    st.markdown(f"🏫 **Unidade:** `{destino}`")
+                    st.markdown(f"📄 **Nota:** `{doc}` | 🗓️ **Data:** {data} | 👤 **Resp:** `{resp}`")
                     
                     cols_show = ['Nome_Produto', 'Quantidade']
                     if 'Unidade_Medida' in group.columns: cols_show.append('Unidade_Medida')
                     if 'Observacao' in group.columns: cols_show.append('Observacao')
                     cols_show.append('Tipo_Fluxo')
-                    
                     st.dataframe(group[cols_show], use_container_width=True, hide_index=True)
 
             st.divider()
             c_d1, c_d2 = st.columns(2)
             
-            # Excel Detalhado
             csv_final = df_rel.drop(columns=['DT_OBJ', 'Lote', 'Nome_Produto'], errors='ignore').to_csv(index=False).encode('utf-8-sig')
             c_d1.download_button("📊 Baixar Excel da Rede", csv_final, "Relatorio_Macro_SEMED.csv", use_container_width=True)
             
-            # PDF Institucional Idêntico ao da Escola
             if FPDF:
                 pdf = FPDF()
                 pdf.add_page()
-                
                 try:
                     pdf.image("Banner.png", x=10, y=10, w=190)
                     pdf.set_y(50) 
@@ -333,7 +349,6 @@ def renderizar_semed():
                 pdf.ln(8)
                 
                 for (lote, doc, data, destino, resp), group in grupos:
-                    # Cabeçalho Cinza agora inclui a ESCOLA
                     pdf.set_font("Arial", 'B', 9); pdf.set_fill_color(230, 230, 230)
                     pdf.cell(190, 8, f" ESCOLA: {str(destino)[:25]} | NOTA: {doc} | DATA: {data}", 1, 1, 'L', True)
                     
@@ -352,22 +367,18 @@ def renderizar_semed():
     # --- 7. ADMIN: GESTÃO DE USUÁRIOS ---
     elif menu == "👥 Gestão de Usuários":
         st.subheader("👥 Controle de Acessos e Perfis")
-        st.write("Crie credenciais para Diretores, Coordenadores e Admins.")
-        
         df_usuarios = carregar_dados("db_usuarios")
         if not df_usuarios.empty:
             st.dataframe(df_usuarios.drop(columns=['Senha_Hash'], errors='ignore'), use_container_width=True, hide_index=True)
-        else:
-            st.info("Base de usuários vazia (exceto você).")
+        else: st.info("Base de usuários vazia.")
 
         with st.expander("➕ Cadastrar Novo Usuário"):
             with st.form("f_new_user"):
                 c1, c2 = st.columns(2)
                 u_email = c1.text_input("E-mail (Login de Acesso)")
                 u_senha = c1.text_input("Senha", type="password")
+                u_perfil = c2.selectbox("Nível de Acesso (Perfil)", ["ESCOLA", "SEMED", "ADMIN"])
                 
-                u_perfil = c2.selectbox("Nível de Acesso (Perfil)", ["ESCOLA", "COORDENADOR", "ADMIN"])
-                # Se o perfil for ESCOLA, tem que vincular ao ID_Escola correto
                 lista_escolas = ["NENHUMA (Acesso Global)"] + df_esc['ID_Escola'].tolist()
                 u_esc = c2.selectbox("Vincular à Escola (Obrigatório para perfil ESCOLA)", lista_escolas)
                 
@@ -376,14 +387,12 @@ def renderizar_semed():
                         id_gerado = f"USR-{datetime.now().strftime('%H%M%S')}"
                         novo_u = pd.DataFrame([[id_gerado, u_email, u_senha, u_perfil, u_esc]], columns=['ID_Usuario', 'Email', 'Senha_Hash', 'Perfil', 'ID_Escola'])
                         salvar_dados(novo_u, "db_usuarios", modo='append')
-                        st.success(f"Usuário {u_email} cadastrado com sucesso!"); st.rerun()
-                    else:
-                        st.error("Preencha E-mail e Senha.")
+                        st.success(f"Usuário cadastrado com sucesso!"); st.rerun()
+                    else: st.error("Preencha E-mail e Senha.")
 
     # --- 8. ADMIN: GERENCIAR CATÁLOGO ---
     elif menu == "⚙️ Gerenciar Catálogo":
         st.subheader("⚙️ Catálogo Central")
-        st.info("Apenas Administradores podem adicionar produtos.")
         st.dataframe(df_cat, use_container_width=True, hide_index=True)
         
         with st.expander("➕ Adicionar Novo Item à Base"):
@@ -406,4 +415,4 @@ def renderizar_semed():
         if not df_logs.empty:
             st.dataframe(df_logs.sort_index(ascending=False), use_container_width=True)
             st.download_button("📥 Exportar Logs", df_logs.to_csv(index=False).encode('utf-8-sig'), "Auditoria_SEMED.csv")
-        else: st.info("Sem logs de exclusão ou adição forçada registrados.")
+        else: st.info("Sem logs registrados.")

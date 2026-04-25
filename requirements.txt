@@ -3,3 +3,4 @@ gspread
 gspread-pandas
 pandas
 google-auth
+openpyxl

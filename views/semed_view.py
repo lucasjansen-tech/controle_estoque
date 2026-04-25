@@ -26,6 +26,10 @@ def renderizar_semed():
     df_mov = carregar_dados("db_movimentacoes")
     df_usuarios = carregar_dados("db_usuarios")
 
+    # --- PROTEÇÃO CONTRA KEYERROR EM ESCOLAS ANTIGAS ---
+    if not df_esc.empty and 'Tipo_Escola' not in df_esc.columns:
+        df_esc['Tipo_Escola'] = "Polo Fundamental (1º ao 9º Ano)"
+
     # --- CABEÇALHO INSTITUCIONAL ---
     st.markdown(f"""
         <div style="background-color:#f8f9fa; padding:20px; border-radius:10px; border-left: 10px solid #004a99; text-align: center;">
@@ -119,7 +123,7 @@ def renderizar_semed():
                     est_global.rename(columns={'Q_Calc': 'Saldo'}, inplace=True)
                     
                     c_e1, c_e2 = st.columns(2)
-                    f_prod = c_e1.selectbox("Verificar produto específico em toda a rede:", ["Todos"] + df_cat['Nome_Produto'].sort_values().tolist())
+                    f_prod = c_e1.selectbox("Verificar produto específico na rede:", ["Todos"] + df_cat['Nome_Produto'].sort_values().tolist())
                     
                     if f_prod != "Todos":
                         est_view = est_global[est_global['Nome_Produto'] == f_prod].sort_values('Saldo', ascending=False)
@@ -133,7 +137,7 @@ def renderizar_semed():
                     alerta_baixo = est_global[est_global['Saldo'] <= 5].sort_values('Saldo')
                     if not alerta_baixo.empty:
                         st.dataframe(alerta_baixo[['Nome_Escola', 'Nome_Produto', 'Saldo', 'Unidade_Medida']], use_container_width=True, hide_index=True)
-                    else: st.success("Nenhuma escola com estoque em nível crítico (<=5).")
+                    else: st.success("Nenhuma escola com estoque crítico (<=5).")
                 else: st.warning("A rede inteira está sem saldo positivo.")
         else: st.warning("Base vazia.")
 
@@ -349,7 +353,7 @@ def renderizar_semed():
                     pdf.ln(3)
                 c_d2.download_button("📄 Baixar PDF", pdf.output(dest='S').encode('latin-1'), "Relatorio_SEMED.pdf", "application/pdf", use_container_width=True)
 
-    # --- 7. ADMIN: GESTÃO DE UNIDADES (VISUALIZAÇÃO, ADIÇÃO E EDIÇÃO) ---
+    # --- 7. ADMIN: GESTÃO DE UNIDADES (CORREÇÃO E EDIÇÃO SEGURA) ---
     elif menu == "🏫 Gestão de Unidades":
         st.subheader("🏫 Gestão de Unidades de Ensino")
         
@@ -384,30 +388,46 @@ def renderizar_semed():
             esc_editar = st.selectbox("Selecione a Escola para Editar", [None] + df_esc['Nome_Escola'].sort_values().tolist())
             if esc_editar:
                 dados_esc = df_esc[df_esc['Nome_Escola'] == esc_editar].iloc[0]
+                
                 with st.form("f_edit_esc"):
                     st.info(f"Editando o ID: {dados_esc['ID_Escola']}")
                     c1, c2 = st.columns(2)
                     up_nome = c1.text_input("Nome", value=dados_esc['Nome_Escola'])
-                    idx_t = tipos_ensino.index(dados_esc['Tipo_Escola']) if dados_esc['Tipo_Escola'] in tipos_ensino else 0
+                    
+                    # Usa .get para evitar KeyError em escolas antigas
+                    tipo_atual = dados_esc.get('Tipo_Escola', "Apenas Ensino Fundamental I")
+                    if pd.isna(tipo_atual): tipo_atual = "Apenas Ensino Fundamental I"
+                    idx_t = tipos_ensino.index(tipo_atual) if tipo_atual in tipos_ensino else 0
+                    
                     up_tipo = c2.selectbox("Tipo de Ensino", tipos_ensino, index=idx_t)
+                    
                     if st.form_submit_button("Salvar Alterações na Escola"):
                         df_esc_resto = df_esc[df_esc['ID_Escola'] != dados_esc['ID_Escola']]
                         df_esc_up = pd.DataFrame([[dados_esc['ID_Escola'], up_nome, up_tipo]], columns=['ID_Escola', 'Nome_Escola', 'Tipo_Escola'])
                         salvar_dados(pd.concat([df_esc_resto, df_esc_up]), "db_escolas", modo='overwrite'); st.success("Atualizado!"); st.rerun()
 
-    # --- 8. ADMIN: GESTÃO DE USUÁRIOS (VISUALIZAÇÃO, ADIÇÃO E EDIÇÃO) ---
+    # --- 8. ADMIN: GESTÃO DE USUÁRIOS (COM FILTROS CRUZADOS) ---
     elif menu == "👥 Gestão de Usuários":
         st.subheader("👥 Controle de Acessos e Perfis")
         
-        c_f1, c_f2 = st.columns(2)
-        f_u_nome = c_f1.text_input("🔍 Buscar por E-mail")
-        f_u_perfil = c_f2.selectbox("Filtrar Perfil", ["Todos", "ESCOLA", "COORDENADOR", "ADMIN", "SEMED"])
+        with st.container(border=True):
+            st.markdown("**🔍 Filtros Avançados de Usuário**")
+            c_f1, c_f2, c_f3 = st.columns(3)
+            f_u_nome = c_f1.text_input("Buscar por E-mail")
+            f_u_perfil = c_f2.selectbox("Filtrar Perfil", ["Todos", "ESCOLA", "COORDENADOR", "ADMIN", "SEMED"])
+            
+            escolas_disp = ["Todas"] + df_esc['Nome_Escola'].tolist()
+            f_u_esc = c_f3.selectbox("Filtrar Escola Vinculada", escolas_disp)
         
         df_u_view = df_usuarios.copy()
+        
         if f_u_nome: df_u_view = df_u_view[df_u_view['Email'].str.contains(f_u_nome, case=False, na=False)]
         if f_u_perfil != "Todos": df_u_view = df_u_view[df_u_view['Perfil'] == f_u_perfil]
+        if f_u_esc != "Todas":
+            id_esc_f = df_esc[df_esc['Nome_Escola'] == f_u_esc]['ID_Escola'].values[0]
+            df_u_view = df_u_view[df_u_view['ID_Escola'] == id_esc_f]
 
-        st.markdown("**Usuários Ativos:**")
+        st.markdown(f"**Usuários Ativos ({len(df_u_view)} encontrados):**")
         if 'usr_excluir' not in st.session_state: st.session_state.usr_excluir = []
         trava_u = st.checkbox("🔓 Habilitar Exclusão Rápida")
         

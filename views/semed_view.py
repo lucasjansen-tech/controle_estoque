@@ -179,3 +179,66 @@ def renderizar_semed():
             edit_u = st.data_editor(df_u_view, num_rows="dynamic", use_container_width=True, hide_index=True)
             if st.button("💾 Atualizar Banco de Usuários"):
                 salvar_dados(edit_u, "db_usuarios", modo='overwrite')
+    
+    # --- 6. RELATÓRIOS E AUDITORIA (NOVO) ---
+    elif menu == "📜 Relatórios e Auditoria":
+        st.subheader("📜 Relatórios de Movimentação da Rede")
+        
+        df_mov_geral = carregar_dados("db_movimentacoes")
+        df_escolas_ref = carregar_dados("db_escolas")
+        df_cat_ref = carregar_dados("db_catalogo")
+        
+        if not df_mov_geral.empty:
+            st.write("Use os filtros abaixo para gerar relatórios precisos.")
+            
+            with st.expander("🔍 Filtros de Relatório", expanded=True):
+                c1, c2, c3 = st.columns(3)
+                
+                with c1:
+                    f_escola = st.multiselect("Filtrar por Unidade (Destino)", 
+                                            ["SEMED"] + df_escolas_ref['ID_Escola'].tolist())
+                    f_tipo = st.multiselect("Tipo de Fluxo", ["ENTRADA", "SAÍDA", "TRANSFERÊNCIA"])
+                
+                with c2:
+                    f_produto = st.multiselect("Filtrar por Produto", df_cat_ref['Nome_Produto'].tolist())
+                    f_origem = st.multiselect("Filtrar por Origem", ["Agricultura Familiar", "Fornecedor", "SEMED"])
+                
+                with c3:
+                    data_inicio = st.date_input("De:", datetime(2024, 1, 1))
+                    data_fim = st.date_input("Até:", datetime.now())
+
+            # --- Lógica de Filtragem ---
+            # Converte datas para comparação
+            df_mov_geral['Data_Hora_DT'] = pd.to_datetime(df_mov_geral['Data_Hora'], dayfirst=True, errors='coerce')
+            
+            df_filtrado = df_mov_geral.copy()
+            
+            if f_escola:
+                df_filtrado = df_filtrado[df_filtrado['ID_Escola'].isin(f_escola)]
+            if f_tipo:
+                df_filtrado = df_filtrado[df_filtrado['Tipo_Fluxo'].isin(f_tipo)]
+            if f_origem:
+                df_filtrado = df_filtrado[df_filtrado['Origem'].isin(f_origem)]
+            if f_produto:
+                # Faz merge para filtrar pelo nome do produto
+                df_filtrado = pd.merge(df_filtrado, df_cat_ref[['ID_Produto', 'Nome_Produto']], on='ID_Produto')
+                df_filtrado = df_filtrado[df_filtrado['Nome_Produto'].isin(f_produto)]
+
+            # Filtro de data
+            df_filtrado = df_filtrado[(df_filtrado['Data_Hora_DT'].dt.date >= data_inicio) & 
+                                     (df_filtrado['Data_Hora_DT'].dt.date <= data_fim)]
+
+            st.write(f"📝 Foram encontrados **{len(df_filtrado)}** registros com estes filtros.")
+            st.dataframe(df_filtrado.drop(columns=['Data_Hora_DT']), use_container_width=True, hide_index=True)
+
+            # --- Geração de Relatório para Download ---
+            csv = df_filtrado.to_csv(index=False).encode('utf-8-sig')
+            st.download_button(
+                label="📥 Baixar Relatório em CSV (Excel)",
+                data=csv,
+                file_name=f"Relatorio_Estoque_{datetime.now().strftime('%d_%m_%Y')}.csv",
+                mime='text/csv',
+                use_container_width=True
+            )
+        else:
+            st.warning("Ainda não há registros de movimentação no sistema.")

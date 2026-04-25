@@ -3,6 +3,7 @@ import pandas as pd
 from datetime import datetime, timedelta
 from modules.database import carregar_dados, salvar_dados
 from modules.logic import calcular_estoque_atual
+import io
 
 # Tenta carregar fpdf para o PDF oficial
 try:
@@ -18,19 +19,17 @@ def renderizar_escola():
     
     nome_escola = next((r['Nome_Escola'] for _, r in df_esc_ref.iterrows() if r['ID_Escola'] == id_escola), "Unidade Escolar")
 
-    # --- CABEÇALHO INSTITUCIONAL NO SISTEMA ---
+    # --- CABEÇALHO INSTITUCIONAL ---
     st.markdown(f"""
-        <div style="background-color:#f0f2f6; padding:20px; border-radius:10px; border-left: 5px solid #007bff;">
-            <h2 style="margin:0;">PREFEITURA MUNICIPAL DE RAPOSA</h2>
-            <h4 style="margin:0; color:#555;">Secretaria Municipal de Educação - SEMED</h4>
-            <hr>
-            <p style="margin:0;"><b>Unidade:</b> {nome_escola} | <b>Operador:</b> {user_data['email']}</p>
+        <div style="background-color:#f8f9fa; padding:15px; border-radius:10px; border-left: 6px solid #004a99;">
+            <h3 style="margin:0; color:#004a99;">PREFEITURA MUNICIPAL DE RAPOSA</h3>
+            <p style="margin:0; color:#666;">Secretaria Municipal de Educação - SEMED</p>
+            <p style="margin:0; font-size:14px;"><b>Unidade:</b> {nome_escola} | <b>Operador:</b> {user_data['email']}</p>
         </div>
     """, unsafe_allow_html=True)
     st.write("")
 
-    # --- MENU LATERAL (TODAS AS OPÇÕES RESTAURADAS E FIXAS) ---
-    menu = st.sidebar.radio("Navegação do Sistema", [
+    menu = st.sidebar.radio("Navegação", [
         "🏠 Estoque Atual", 
         "📦 Receber Materiais", 
         "✏️ Corrigir/Adicionar em Nota",
@@ -40,7 +39,7 @@ def renderizar_escola():
     ])
 
     st.sidebar.divider()
-    if st.sidebar.button("🔄 Sincronizar Base de Dados", use_container_width=True):
+    if st.sidebar.button("🔄 Sincronizar Dados", use_container_width=True):
         st.cache_data.clear()
         st.rerun()
 
@@ -61,11 +60,10 @@ def renderizar_escola():
         else:
             st.info("Nenhum item em estoque no momento.")
 
-    # --- 2. RECEBER MATERIAIS (LOTE DINÂMICO) ---
+    # --- 2. RECEBER MATERIAIS ---
     elif menu == "📦 Receber Materiais":
         st.subheader("📦 Registrar Entrada de Material")
         with st.container(border=True):
-            st.markdown("**1. Dados da Entrega**")
             c1, c2, c3 = st.columns(3)
             origem = c1.selectbox("Origem", ["Agricultura Familiar", "SEMED", "Fornecedor"])
             doc_ref = c2.text_input("Nº da Nota / Documento")
@@ -74,7 +72,6 @@ def renderizar_escola():
         if 'lista_itens' not in st.session_state:
             st.session_state.lista_itens = [{'id': 0, 'prod': None, 'qtd': 0.0}]
 
-        st.markdown("**2. Produtos Recebidos**")
         for i, item in enumerate(st.session_state.lista_itens):
             with st.container(border=True):
                 col_p, col_q, col_d = st.columns([3, 1, 0.5])
@@ -98,16 +95,19 @@ def renderizar_escola():
                     if it['prod'] and it['qtd'] > 0:
                         id_p = df_cat[df_cat['Nome_Produto'] == it['prod']]['ID_Produto'].values[0]
                         lista_s.append([f"MOV-{t_id}-{idx}", data_r.strftime('%d/%m/%Y'), id_escola, "ENTRADA", origem, nome_escola, id_p, it['qtd'], user_data['email'], doc_ref])
-                if salvar_dados(pd.DataFrame(lista_s, columns=['ID_Movimentacao','Data_Hora','ID_Escola','Tipo_Fluxo','Origem','Destino','ID_Produto','Quantidade','ID_Usuario','Documento_Ref']), "db_movimentacoes", modo='append'):
-                    st.success("Recebimento registrado com sucesso!")
-                    st.session_state.lista_itens = [{'id': 0, 'prod': None, 'qtd': 0.0}]
-                    st.rerun()
+                
+                if lista_s:
+                    df_final = pd.DataFrame(lista_s, columns=['ID_Movimentacao','Data_Hora','ID_Escola','Tipo_Fluxo','Origem','Destino','ID_Produto','Quantidade','ID_Usuario','Documento_Ref'])
+                    if salvar_dados(df_final, "db_movimentacoes", modo='append'):
+                        st.success("Recebimento registrado!")
+                        st.session_state.lista_itens = [{'id': 0, 'prod': None, 'qtd': 0.0}]
+                        st.rerun()
             else:
                 st.error("O número do documento é obrigatório.")
 
-    # --- 3. CORRIGIR/ADICIONAR EM NOTA (TRAVA DE SEGURANÇA) ---
+    # --- 3. CORRIGIR/ADICIONAR EM NOTA (RESOLUÇÃO DO BUG 'NAN') ---
     elif menu == "✏️ Corrigir/Adicionar em Nota":
-        st.subheader("✏️ Edição e Adição em Documentos")
+        st.subheader("✏️ Edição Avançada de Documentos")
         df_mov = carregar_dados("db_movimentacoes")
         minhas = df_mov[df_mov['ID_Escola'] == id_escola].copy()
         
@@ -121,66 +121,68 @@ def renderizar_escola():
                 itens_edicao = minhas[(minhas['Documento_Ref'] == doc_o) & (minhas['Data_Hora'] == data_o)]
                 itens_edicao = pd.merge(itens_edicao, df_cat[['ID_Produto', 'Nome_Produto']], on='ID_Produto', how='left')
 
-                # Trava de segurança para exclusão
-                trava_exclusao = st.sidebar.checkbox("🔓 Liberar Exclusão")
+                trava_exclusao = st.sidebar.checkbox("🔓 Liberar Exclusão de Itens")
 
-                # Listagem para Edição
                 novos_valores = []
                 excluidos_ids = []
+
                 for idx, row in itens_edicao.reset_index().iterrows():
                     with st.container(border=True):
                         c1, c2, c3 = st.columns([3, 1, 1])
                         c1.markdown(f"**Item:** {row['Nome_Produto']}")
                         val_q = c2.number_input("Qtd", value=float(row['Quantidade']), key=f"fix_q_{idx}_{row['ID_Movimentacao']}")
+                        
                         if trava_exclusao:
                             if c3.button("🗑️ Excluir", key=f"fix_d_{idx}_{row['ID_Movimentacao']}"):
                                 excluidos_ids.append(row['ID_Movimentacao'])
+                                st.toast(f"Item marcado para remoção.")
                         else:
-                            c3.write("🔒 Preservado")
-                        
+                            c3.write("🔒 Bloqueado")
+
                         l_up = row.to_dict()
                         l_up['Quantidade'] = val_q
                         novos_valores.append(l_up)
 
-                # Adicionar novo item na nota existente
-                with st.expander("➕ Inserir novo produto nesta nota"):
-                    new_p = st.selectbox("Produto", [None] + df_cat['Nome_Produto'].sort_values().tolist(), key="add_p_nota")
-                    new_q = st.number_input("Quantidade", min_value=0.0, key="add_q_nota")
-                    if st.button("Adicionar à Nota"):
-                        if new_p and new_q > 0:
-                            id_p_new = df_cat[df_cat['Nome_Produto'] == new_p]['ID_Produto'].values[0]
-                            nova_linha = {
-                                'ID_Movimentacao': f"MOV-{datetime.now().strftime('%H%M%S')}-ADD",
-                                'Data_Hora': data_o, 'ID_Escola': id_escola, 'Tipo_Fluxo': "ENTRADA",
-                                'Origem': itens_edicao.iloc[0]['Origem'], 'Destino': nome_escola,
-                                'ID_Produto': id_p_new, 'Quantidade': new_q,
-                                'ID_Usuario': user_data['email'], 'Documento_Ref': doc_o
-                            }
-                            df_full = carregar_dados("db_movimentacoes")
-                            if salvar_dados(pd.concat([df_full, pd.DataFrame([nova_linha])]), "db_movimentacoes", modo='overwrite'):
+                # --- Adicionar novo produto na mesma nota ---
+                with st.expander("➕ Inserir outro produto nesta nota"):
+                    n_p = st.selectbox("Produto", [None] + df_cat['Nome_Produto'].tolist(), key="add_p_ex")
+                    n_q = st.number_input("Quantidade", min_value=0.0, key="add_q_ex")
+                    if st.button("Adicionar"):
+                        if n_p and n_q > 0:
+                            id_p_n = df_cat[df_cat['Nome_Produto'] == n_p]['ID_Produto'].values[0]
+                            nova_l = pd.DataFrame([[f"MOV-{datetime.now().strftime('%H%M%S')}-ADD", data_o, id_escola, "ENTRADA", itens_edicao.iloc[0]['Origem'], nome_escola, id_p_n, n_q, user_data['email'], doc_o]], 
+                                                 columns=['ID_Movimentacao','Data_Hora','ID_Escola','Tipo_Fluxo','Origem','Destino','ID_Produto','Quantidade','ID_Usuario','Documento_Ref'])
+                            if salvar_dados(pd.concat([df_mov, nova_l]), "db_movimentacoes", modo='overwrite'):
                                 st.success("Item adicionado!")
                                 st.rerun()
 
                 if st.button("💾 SALVAR ALTERAÇÕES", type="primary", use_container_width=True):
+                    # Lógica blindada contra NAN
                     df_full = carregar_dados("db_movimentacoes")
-                    ids_originais = itens_edicao['ID_Movimentacao'].tolist()
-                    df_restante = df_full[~df_full['ID_Movimentacao'].isin(ids_originais)]
+                    ids_nota = itens_edicao['ID_Movimentacao'].tolist()
+                    df_restante = df_full[~df_full['ID_Movimentacao'].isin(ids_nota)]
+                    
                     df_novos = pd.DataFrame(novos_valores)
                     df_novos = df_novos[~df_novos['ID_Movimentacao'].isin(excluidos_ids)]
+                    
+                    # Limpeza vital antes de salvar
                     df_novos = df_novos.drop(columns=['Nome_Produto', 'Label'], errors='ignore')
-                    if salvar_dados(pd.concat([df_restante, df_novos]), "db_movimentacoes", modo='overwrite'):
-                        st.success("Nota atualizada!")
+                    df_final = pd.concat([df_restante, df_novos]).reset_index(drop=True)
+                    df_final = df_final.fillna("") # Substitui qualquer valor nulo por vazio
+                    
+                    if salvar_dados(df_final, "db_movimentacoes", modo='overwrite'):
+                        st.success("Nota atualizada com sucesso!")
                         st.rerun()
 
-    # --- 4. REGISTRAR USO (CONSUMO) ---
+    # --- 4. REGISTRAR USO ---
     elif menu == "🍳 Registrar Uso (Consumo)":
         st.subheader("🍳 Registro de Baixa Diária")
         with st.form("f_uso", clear_on_submit=True):
             c1, c2 = st.columns(2)
-            p_u = c1.selectbox("Produto Utilizado", df_cat['Nome_Produto'].sort_values().tolist())
+            p_u = c1.selectbox("Produto", df_cat['Nome_Produto'].sort_values().tolist())
             q_u = c1.number_input("Quantidade", min_value=0.01)
-            d_u = c2.date_input("Data do Uso", datetime.now(), format="DD/MM/YYYY")
-            o_u = c2.text_input("Finalidade (Ex: Merenda)")
+            d_u = c2.date_input("Data", datetime.now(), format="DD/MM/YYYY")
+            o_u = c2.text_input("Observação (Ex: Merenda)")
             if st.form_submit_button("Confirmar Saída", use_container_width=True):
                 id_p = df_cat[df_cat['Nome_Produto'] == p_u]['ID_Produto'].values[0]
                 df_s = pd.DataFrame([[f"SAI-{datetime.now().strftime('%H%M%S')}", d_u.strftime('%d/%m/%Y'), id_escola, "SAÍDA", nome_escola, "CONSUMO INTERNO", id_p, q_u, user_data['email'], o_u]], 
@@ -192,53 +194,56 @@ def renderizar_escola():
     # --- 5. CADASTRAR NOVO ITEM ---
     elif menu == "🍎 Cadastrar Novo Item":
         st.subheader("🍎 Novo Item da Agricultura Familiar")
-        with st.form("f_new_cat"):
-            c1, c2 = st.columns(2)
-            id_p = c1.text_input("Código (ID_Produto)")
-            nm_p = c1.text_input("Nome do Produto")
-            un_p = c2.selectbox("Unidade", ["Kg", "Unid", "Maço", "Pct", "Cx"])
-            if st.form_submit_button("Cadastrar no Catálogo"):
+        with st.form("f_novo"):
+            id_p = st.text_input("ID do Item")
+            nm_p = st.text_input("Nome")
+            un_p = st.selectbox("Unidade", ["Kg", "Unid", "Maço", "Pct"])
+            if st.form_submit_button("Cadastrar"):
                 novo = pd.DataFrame([[id_p, nm_p, "Agricultura Familiar", un_p]], columns=['ID_Produto', 'Nome_Produto', 'Categoria', 'Unidade_Medida'])
                 if salvar_dados(novo, "db_catalogo"):
                     st.success("Item cadastrado!")
                     st.rerun()
 
-    # --- 6. RELATÓRIOS OFICIAIS (AGRUPAMENTO POR NOTA E IDENTIFICAÇÃO) ---
+    # --- 6. RELATÓRIOS OFICIAIS (ORGANIZAÇÃO E PDF) ---
     elif menu == "📜 Relatórios Oficiais":
-        st.subheader("📜 Histórico Consolidado de Movimentações")
+        st.subheader("📜 Histórico Consolidado")
         df_m = carregar_dados("db_movimentacoes")
         df_m = df_m[df_m['ID_Escola'] == id_escola].copy()
         
         if not df_m.empty:
             df_m = pd.merge(df_m, df_cat[['ID_Produto', 'Nome_Produto', 'Unidade_Medida']], on='ID_Produto', how='left')
             df_m['DT_OBJ'] = pd.to_datetime(df_m['Data_Hora'], dayfirst=True, errors='coerce')
-            
-            with st.container(border=True):
-                st.markdown("**🔍 Filtros e Pesquisa**")
-                c1, c2 = st.columns(2)
-                f_prod = c1.multiselect("Filtrar por Produto", df_cat['Nome_Produto'].unique())
-                f_tipo = c2.multiselect("Filtrar por Fluxo", ["ENTRADA", "SAÍDA", "TRANSFERÊNCIA"])
-                
-                if f_prod: df_m = df_m[df_m['Nome_Produto'].isin(f_prod)]
-                if f_tipo: df_m = df_m[df_m['Tipo_Fluxo'].isin(f_tipo)]
+            df_m = df_m.sort_values('DT_OBJ', ascending=False)
 
-            # AGRUPAMENTO POR NOTA E DATA
-            grupos = df_m.sort_values('DT_OBJ', ascending=False).groupby(['Documento_Ref', 'Data_Hora', 'Origem', 'ID_Usuario'], sort=False)
-            
-            for (doc, data, ori, resp), group in grupos:
+            # Agrupamento Visual
+            for (doc, data, resp), group in df_m.groupby(['Documento_Ref', 'Data_Hora', 'ID_Usuario'], sort=False):
                 with st.container(border=True):
-                    # Cabeçalho da Nota
-                    st.markdown(f"📄 **Nota/Documento:** `{doc}` | 🗓️ **Data:** {data}")
-                    st.markdown(f"📍 **Origem:** {ori} | 👤 **Responsável pelo Lançamento:** `{resp}`")
-                    # Tabela de Itens da Nota
+                    st.markdown(f"📄 **Nota:** `{doc}` | 🗓️ **Data:** {data} | 👤 **Resp:** `{resp}`")
                     st.table(group[['Nome_Produto', 'Quantidade', 'Unidade_Medida', 'Tipo_Fluxo']])
 
             st.divider()
             c1, c2 = st.columns(2)
-            csv = df_m[['Data_Hora', 'Documento_Ref', 'Origem', 'ID_Usuario', 'Nome_Produto', 'Quantidade', 'Unidade_Medida']].to_csv(index=False).encode('utf-8-sig')
-            c1.download_button("📊 Baixar Excel Detalhado", csv, f"Relatorio_{id_escola}.csv", use_container_width=True)
             
-            if FPDF and c2.button("📄 Gerar PDF Oficial", use_container_width=True):
-                st.info("Função PDF integrada: utilize a biblioteca fpdf no requirements.")
+            # Exportação Excel Otimizada (Colunas em ordem lógica)
+            cols_excel = ['Data_Hora', 'Documento_Ref', 'Origem', 'ID_Usuario', 'Nome_Produto', 'Quantidade', 'Unidade_Medida']
+            csv = df_m[cols_excel].to_csv(index=False).encode('utf-8-sig')
+            c1.download_button("📊 Baixar Excel Detalhado", csv, f"Estoque_{id_escola}.csv", use_container_width=True)
+            
+            # Download PDF Funcional
+            if FPDF:
+                pdf = FPDF()
+                pdf.add_page()
+                pdf.set_font("Arial", 'B', 14)
+                pdf.cell(190, 10, f"RELATORIO DE ESTOQUE - {nome_escola}", ln=True, align='C')
+                pdf.ln(10)
+                pdf.set_font("Arial", 'B', 10)
+                # Cabeçalho PDF
+                pdf.cell(25, 8, "Data", 1); pdf.cell(25, 8, "Nota", 1); pdf.cell(80, 8, "Item", 1); pdf.cell(20, 8, "Qtd", 1); pdf.cell(40, 8, "Tipo", 1); pdf.ln()
+                pdf.set_font("Arial", '', 8)
+                for _, r in df_m.iterrows():
+                    pdf.cell(25, 7, str(r['Data_Hora']), 1); pdf.cell(25, 7, str(r['Documento_Ref']), 1); pdf.cell(80, 7, str(r['Nome_Produto'])[:40], 1); pdf.cell(20, 7, str(r['Quantidade']), 1); pdf.cell(40, 7, str(r['Tipo_Fluxo']), 1); pdf.ln()
+                
+                pdf_output = pdf.output(dest='S').encode('latin-1')
+                c2.download_button("📄 Baixar PDF de Conferência", pdf_output, f"Relatorio_{id_escola}.pdf", "application/pdf", use_container_width=True)
         else:
             st.info("Histórico vazio.")

@@ -19,12 +19,14 @@ def renderizar_escola():
     
     nome_escola = next((r['Nome_Escola'] for _, r in df_esc_ref.iterrows() if r['ID_Escola'] == id_escola), "Unidade Escolar")
 
-    # --- CABEÇALHO INSTITUCIONAL ---
+    # --- CABEÇALHO INSTITUCIONAL NO SISTEMA ---
     st.markdown(f"""
-        <div style="background-color:#f8f9fa; padding:15px; border-radius:10px; border-left: 6px solid #004a99;">
-            <h3 style="margin:0; color:#004a99;">PREFEITURA MUNICIPAL DE RAPOSA</h3>
-            <p style="margin:0; color:#666;">Secretaria Municipal de Educação - SEMED</p>
-            <p style="margin:0; font-size:14px;"><b>Unidade:</b> {nome_escola} | <b>Operador:</b> {user_data['email']}</p>
+        <div style="background-color:#f8f9fa; padding:20px; border-radius:10px; border-left: 8px solid #004a99; text-align: center;">
+            <h2 style="margin:0; color:#004a99;">PREFEITURA MUNICIPAL DE RAPOSA</h2>
+            <h4 style="margin:0; color:#333;">Secretaria Municipal de Educação - SEMED</h4>
+            <h5 style="margin:5px 0; color:#666;">Controle de Recebimento e Estoque</h5>
+            <hr style="margin:10px 0;">
+            <p style="margin:0; font-size:16px;"><b>Unidade:</b> {nome_escola}</p>
         </div>
     """, unsafe_allow_html=True)
     st.write("")
@@ -50,7 +52,6 @@ def renderizar_escola():
         if not saldo.empty:
             df_f = pd.merge(saldo, df_cat, on='ID_Produto', how='left')
             st.bar_chart(df_f.set_index('Nome_Produto')['Saldo'])
-            st.divider()
             cols = st.columns(3)
             for idx, row in df_f.iterrows():
                 with cols[idx % 3].container(border=True):
@@ -58,7 +59,7 @@ def renderizar_escola():
                     st.caption(f"{row['Unidade_Medida']}")
                     st.markdown(f"**{row['Nome_Produto']}**")
         else:
-            st.info("Nenhum item em estoque no momento.")
+            st.info("Nenhum item em estoque.")
 
     # --- 2. RECEBER MATERIAIS ---
     elif menu == "📦 Receber Materiais":
@@ -74,11 +75,11 @@ def renderizar_escola():
 
         for i, item in enumerate(st.session_state.lista_itens):
             with st.container(border=True):
-                col_p, col_q, col_d = st.columns([3, 1, 0.5])
-                st.session_state.lista_itens[i]['prod'] = col_p.selectbox(f"Produto {i+1}", [None] + df_cat['Nome_Produto'].sort_values().tolist(), key=f"rec_p_{item['id']}")
-                st.session_state.lista_itens[i]['qtd'] = col_q.number_input("Qtd", min_value=0.0, key=f"rec_q_{item['id']}")
+                cp, cq, cd = st.columns([3, 1, 0.5])
+                st.session_state.lista_itens[i]['prod'] = cp.selectbox(f"Produto {i+1}", [None] + df_cat['Nome_Produto'].sort_values().tolist(), key=f"rec_p_{item['id']}")
+                st.session_state.lista_itens[i]['qtd'] = cq.number_input("Qtd", min_value=0.0, key=f"rec_q_{item['id']}")
                 if len(st.session_state.lista_itens) > 1:
-                    if col_d.button("❌", key=f"rec_del_{item['id']}"):
+                    if cd.button("❌", key=f"rec_del_{item['id']}"):
                         st.session_state.lista_itens.pop(i)
                         st.rerun()
 
@@ -95,116 +96,97 @@ def renderizar_escola():
                     if it['prod'] and it['qtd'] > 0:
                         id_p = df_cat[df_cat['Nome_Produto'] == it['prod']]['ID_Produto'].values[0]
                         lista_s.append([f"MOV-{t_id}-{idx}", data_r.strftime('%d/%m/%Y'), id_escola, "ENTRADA", origem, nome_escola, id_p, it['qtd'], user_data['email'], doc_ref])
-                
                 if lista_s:
-                    df_final = pd.DataFrame(lista_s, columns=['ID_Movimentacao','Data_Hora','ID_Escola','Tipo_Fluxo','Origem','Destino','ID_Produto','Quantidade','ID_Usuario','Documento_Ref'])
-                    if salvar_dados(df_final, "db_movimentacoes", modo='append'):
-                        st.success("Recebimento registrado!")
+                    if salvar_dados(pd.DataFrame(lista_s, columns=['ID_Movimentacao','Data_Hora','ID_Escola','Tipo_Fluxo','Origem','Destino','ID_Produto','Quantidade','ID_Usuario','Documento_Ref']), "db_movimentacoes", modo='append'):
+                        st.success("Salvo!")
                         st.session_state.lista_itens = [{'id': 0, 'prod': None, 'qtd': 0.0}]
                         st.rerun()
             else:
-                st.error("O número do documento é obrigatório.")
+                st.error("Documento obrigatório.")
 
-    # --- 3. CORRIGIR/ADICIONAR EM NOTA (RESOLUÇÃO DO BUG 'NAN') ---
+    # --- 3. CORRIGIR/ADICIONAR EM NOTA (FIX NAN + ADIÇÃO/EXCLUSÃO) ---
     elif menu == "✏️ Corrigir/Adicionar em Nota":
-        st.subheader("✏️ Edição Avançada de Documentos")
+        st.subheader("✏️ Edição Avançada de Notas")
         df_mov = carregar_dados("db_movimentacoes")
         minhas = df_mov[df_mov['ID_Escola'] == id_escola].copy()
         
         if not minhas.empty:
             minhas['Label'] = "Nota: " + minhas['Documento_Ref'] + " (" + minhas['Data_Hora'] + ")"
-            sel = st.selectbox("Selecione o Documento:", [None] + sorted(minhas['Label'].unique().tolist(), reverse=True))
+            sel = st.selectbox("Escolha a Nota para editar:", [None] + sorted(minhas['Label'].unique().tolist(), reverse=True))
             
             if sel:
                 doc_o = sel.split("Nota: ")[1].split(" (")[0]
                 data_o = sel.split("(")[1].replace(")", "")
-                itens_edicao = minhas[(minhas['Documento_Ref'] == doc_o) & (minhas['Data_Hora'] == data_o)]
-                itens_edicao = pd.merge(itens_edicao, df_cat[['ID_Produto', 'Nome_Produto']], on='ID_Produto', how='left')
+                itens_nota = minhas[(minhas['Documento_Ref'] == doc_o) & (minhas['Data_Hora'] == data_o)]
+                itens_nota = pd.merge(itens_nota, df_cat[['ID_Produto', 'Nome_Produto']], on='ID_Produto', how='left')
 
-                trava_exclusao = st.sidebar.checkbox("🔓 Liberar Exclusão de Itens")
+                trava_excl = st.sidebar.checkbox("🔓 Liberar Exclusão")
+                novos_v = []
+                excl_ids = []
 
-                novos_valores = []
-                excluidos_ids = []
-
-                for idx, row in itens_edicao.reset_index().iterrows():
+                for idx, row in itens_nota.reset_index().iterrows():
                     with st.container(border=True):
                         c1, c2, c3 = st.columns([3, 1, 1])
                         c1.markdown(f"**Item:** {row['Nome_Produto']}")
                         val_q = c2.number_input("Qtd", value=float(row['Quantidade']), key=f"fix_q_{idx}_{row['ID_Movimentacao']}")
-                        
-                        if trava_exclusao:
+                        if trava_excl:
                             if c3.button("🗑️ Excluir", key=f"fix_d_{idx}_{row['ID_Movimentacao']}"):
-                                excluidos_ids.append(row['ID_Movimentacao'])
-                                st.toast(f"Item marcado para remoção.")
-                        else:
-                            c3.write("🔒 Bloqueado")
+                                excl_ids.append(row['ID_Movimentacao'])
+                                st.toast("Item marcado para remoção.")
+                        else: c3.write("🔒")
 
                         l_up = row.to_dict()
                         l_up['Quantidade'] = val_q
-                        novos_valores.append(l_up)
+                        novos_v.append(l_up)
 
-                # --- Adicionar novo produto na mesma nota ---
                 with st.expander("➕ Inserir outro produto nesta nota"):
                     n_p = st.selectbox("Produto", [None] + df_cat['Nome_Produto'].tolist(), key="add_p_ex")
                     n_q = st.number_input("Quantidade", min_value=0.0, key="add_q_ex")
                     if st.button("Adicionar"):
                         if n_p and n_q > 0:
                             id_p_n = df_cat[df_cat['Nome_Produto'] == n_p]['ID_Produto'].values[0]
-                            nova_l = pd.DataFrame([[f"MOV-{datetime.now().strftime('%H%M%S')}-ADD", data_o, id_escola, "ENTRADA", itens_edicao.iloc[0]['Origem'], nome_escola, id_p_n, n_q, user_data['email'], doc_o]], 
+                            nova_l = pd.DataFrame([[f"MOV-{datetime.now().strftime('%H%M%S')}-ADD", data_o, id_escola, "ENTRADA", itens_nota.iloc[0]['Origem'], nome_escola, id_p_n, n_q, user_data['email'], doc_o]], 
                                                  columns=['ID_Movimentacao','Data_Hora','ID_Escola','Tipo_Fluxo','Origem','Destino','ID_Produto','Quantidade','ID_Usuario','Documento_Ref'])
                             if salvar_dados(pd.concat([df_mov, nova_l]), "db_movimentacoes", modo='overwrite'):
                                 st.success("Item adicionado!")
                                 st.rerun()
 
                 if st.button("💾 SALVAR ALTERAÇÕES", type="primary", use_container_width=True):
-                    # Lógica blindada contra NAN
                     df_full = carregar_dados("db_movimentacoes")
-                    ids_nota = itens_edicao['ID_Movimentacao'].tolist()
-                    df_restante = df_full[~df_full['ID_Movimentacao'].isin(ids_nota)]
-                    
-                    df_novos = pd.DataFrame(novos_valores)
-                    df_novos = df_novos[~df_novos['ID_Movimentacao'].isin(excluidos_ids)]
-                    
-                    # Limpeza vital antes de salvar
-                    df_novos = df_novos.drop(columns=['Nome_Produto', 'Label'], errors='ignore')
-                    df_final = pd.concat([df_restante, df_novos]).reset_index(drop=True)
-                    df_final = df_final.fillna("") # Substitui qualquer valor nulo por vazio
-                    
+                    ids_n = itens_nota['ID_Movimentacao'].tolist()
+                    df_r = df_full[~df_full['ID_Movimentacao'].isin(ids_n)]
+                    df_n = pd.DataFrame(novos_v)
+                    df_n = df_n[~df_n['ID_Movimentacao'].isin(excl_ids)]
+                    df_n = df_n.drop(columns=['Nome_Produto', 'Label'], errors='ignore')
+                    df_final = pd.concat([df_r, df_n]).reset_index(drop=True).fillna("")
                     if salvar_dados(df_final, "db_movimentacoes", modo='overwrite'):
-                        st.success("Nota atualizada com sucesso!")
-                        st.rerun()
+                        st.success("Salvo!"); st.rerun()
+        else: st.info("Sem dados.")
 
     # --- 4. REGISTRAR USO ---
     elif menu == "🍳 Registrar Uso (Consumo)":
-        st.subheader("🍳 Registro de Baixa Diária")
+        st.subheader("🍳 Baixa Diária")
         with st.form("f_uso", clear_on_submit=True):
             c1, c2 = st.columns(2)
             p_u = c1.selectbox("Produto", df_cat['Nome_Produto'].sort_values().tolist())
-            q_u = c1.number_input("Quantidade", min_value=0.01)
+            q_u = c1.number_input("Qtd", min_value=0.01)
             d_u = c2.date_input("Data", datetime.now(), format="DD/MM/YYYY")
-            o_u = c2.text_input("Observação (Ex: Merenda)")
-            if st.form_submit_button("Confirmar Saída", use_container_width=True):
+            o_u = c2.text_input("Finalidade")
+            if st.form_submit_button("Confirmar", use_container_width=True):
                 id_p = df_cat[df_cat['Nome_Produto'] == p_u]['ID_Produto'].values[0]
                 df_s = pd.DataFrame([[f"SAI-{datetime.now().strftime('%H%M%S')}", d_u.strftime('%d/%m/%Y'), id_escola, "SAÍDA", nome_escola, "CONSUMO INTERNO", id_p, q_u, user_data['email'], o_u]], 
                                     columns=['ID_Movimentacao','Data_Hora','ID_Escola','Tipo_Fluxo','Origem','Destino','ID_Produto','Quantidade','ID_Usuario','Documento_Ref'])
-                if salvar_dados(df_s, "db_movimentacoes", modo='append'):
-                    st.warning("Saída registrada!")
-                    st.rerun()
+                salvar_dados(df_s, "db_movimentacoes", modo='append'); st.rerun()
 
     # --- 5. CADASTRAR NOVO ITEM ---
     elif menu == "🍎 Cadastrar Novo Item":
-        st.subheader("🍎 Novo Item da Agricultura Familiar")
+        st.subheader("🍎 Novo Item Agricultura Familiar")
         with st.form("f_novo"):
-            id_p = st.text_input("ID do Item")
-            nm_p = st.text_input("Nome")
-            un_p = st.selectbox("Unidade", ["Kg", "Unid", "Maço", "Pct"])
+            id_p = st.text_input("ID"); nm_p = st.text_input("Nome"); un_p = st.selectbox("Unidade", ["Kg", "Unid", "Maço", "Pct"])
             if st.form_submit_button("Cadastrar"):
-                novo = pd.DataFrame([[id_p, nm_p, "Agricultura Familiar", un_p]], columns=['ID_Produto', 'Nome_Produto', 'Categoria', 'Unidade_Medida'])
-                if salvar_dados(novo, "db_catalogo"):
-                    st.success("Item cadastrado!")
-                    st.rerun()
+                salvar_dados(pd.DataFrame([[id_p, nm_p, "Agricultura Familiar", un_p]], columns=['ID_Produto', 'Nome_Produto', 'Categoria', 'Unidade_Medida']), "db_catalogo"); st.rerun()
 
-# --- 6. RELATÓRIOS OFICIAIS (AGRUPAMENTO POR NOTA E PDF) ---
+    # --- 6. RELATÓRIOS OFICIAIS (AGRUPAMENTO POR NOTA E PDF) ---
     elif menu == "📜 Relatórios Oficiais":
         st.subheader("📜 Histórico Consolidado")
         df_m = carregar_dados("db_movimentacoes")

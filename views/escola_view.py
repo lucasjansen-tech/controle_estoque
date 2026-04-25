@@ -204,7 +204,7 @@ def renderizar_escola():
                     st.success("Item cadastrado!")
                     st.rerun()
 
-    # --- 6. RELATÓRIOS OFICIAIS (ORGANIZAÇÃO E PDF) ---
+# --- 6. RELATÓRIOS OFICIAIS (AGRUPAMENTO POR NOTA E PDF) ---
     elif menu == "📜 Relatórios Oficiais":
         st.subheader("📜 Histórico Consolidado")
         df_m = carregar_dados("db_movimentacoes")
@@ -215,35 +215,68 @@ def renderizar_escola():
             df_m['DT_OBJ'] = pd.to_datetime(df_m['Data_Hora'], dayfirst=True, errors='coerce')
             df_m = df_m.sort_values('DT_OBJ', ascending=False)
 
-            # Agrupamento Visual
+            with st.container(border=True):
+                st.markdown("**🔍 Filtros de Relatório**")
+                c1, c2 = st.columns(2)
+                f_per = c1.selectbox("Período Rápido", ["Todo o Histórico", "Mês Atual", "Últimos 90 dias"])
+                f_tipo = c2.multiselect("Filtrar por Tipo", ["ENTRADA", "SAÍDA", "TRANSFERÊNCIA"])
+                if f_tipo: df_m = df_m[df_m['Tipo_Fluxo'].isin(f_tipo)]
+
+            # --- EXIBIÇÃO AGRUPADA POR BLOCOS DE NOTA (UX EXIGIDA) ---
+            # Agrupamos por Nota, Data e Responsável para criar os blocos
             for (doc, data, resp), group in df_m.groupby(['Documento_Ref', 'Data_Hora', 'ID_Usuario'], sort=False):
                 with st.container(border=True):
-                    st.markdown(f"📄 **Nota:** `{doc}` | 🗓️ **Data:** {data} | 👤 **Resp:** `{resp}`")
-                    st.table(group[['Nome_Produto', 'Quantidade', 'Unidade_Medida', 'Tipo_Fluxo']])
+                    col_h1, col_h2 = st.columns([3, 1])
+                    col_h1.markdown(f"📄 **Documento/Nota:** `{doc}`")
+                    col_h1.markdown(f"🗓️ **Data do Recebimento:** {data}")
+                    col_h2.markdown(f"👤 **Responsável:**")
+                    col_h2.caption(resp)
+                    
+                    st.markdown("---")
+                    # Tabela limpa de itens dentro daquela nota específica
+                    st.dataframe(group[['Nome_Produto', 'Quantidade', 'Unidade_Medida', 'Tipo_Fluxo']], 
+                                 use_container_width=True, hide_index=True)
 
             st.divider()
-            c1, c2 = st.columns(2)
+            col_d1, col_d2 = st.columns(2)
             
-            # Exportação Excel Otimizada (Colunas em ordem lógica)
-            cols_excel = ['Data_Hora', 'Documento_Ref', 'Origem', 'ID_Usuario', 'Nome_Produto', 'Quantidade', 'Unidade_Medida']
-            csv = df_m[cols_excel].to_csv(index=False).encode('utf-8-sig')
-            c1.download_button("📊 Baixar Excel Detalhado", csv, f"Estoque_{id_escola}.csv", use_container_width=True)
+            # Exportação Excel (Cabeçalho Organizado)
+            cols_ex = ['Data_Hora', 'Documento_Ref', 'Origem', 'ID_Usuario', 'Nome_Produto', 'Quantidade', 'Unidade_Medida']
+            csv = df_m[cols_ex].to_csv(index=False).encode('utf-8-sig')
+            col_d1.download_button("📊 Baixar Excel Otimizado", csv, f"Relatorio_{id_escola}.csv", use_container_width=True)
             
-            # Download PDF Funcional
+            # Geração de PDF Oficial Agrupado
             if FPDF:
                 pdf = FPDF()
                 pdf.add_page()
                 pdf.set_font("Arial", 'B', 14)
-                pdf.cell(190, 10, f"RELATORIO DE ESTOQUE - {nome_escola}", ln=True, align='C')
-                pdf.ln(10)
-                pdf.set_font("Arial", 'B', 10)
-                # Cabeçalho PDF
-                pdf.cell(25, 8, "Data", 1); pdf.cell(25, 8, "Nota", 1); pdf.cell(80, 8, "Item", 1); pdf.cell(20, 8, "Qtd", 1); pdf.cell(40, 8, "Tipo", 1); pdf.ln()
-                pdf.set_font("Arial", '', 8)
-                for _, r in df_m.iterrows():
-                    pdf.cell(25, 7, str(r['Data_Hora']), 1); pdf.cell(25, 7, str(r['Documento_Ref']), 1); pdf.cell(80, 7, str(r['Nome_Produto'])[:40], 1); pdf.cell(20, 7, str(r['Quantidade']), 1); pdf.cell(40, 7, str(r['Tipo_Fluxo']), 1); pdf.ln()
-                
-                pdf_output = pdf.output(dest='S').encode('latin-1')
-                c2.download_button("📄 Baixar PDF de Conferência", pdf_output, f"Relatorio_{id_escola}.pdf", "application/pdf", use_container_width=True)
+                pdf.cell(190, 10, "PREFEITURA MUNICIPAL DE RAPOSA", ln=True, align='C')
+                pdf.set_font("Arial", '', 11)
+                pdf.cell(190, 7, "Secretaria Municipal de Educacao - SEMED", ln=True, align='C')
+                pdf.cell(190, 7, "Controle de Recebimento de Materiais", ln=True, align='C')
+                pdf.ln(5)
+                pdf.set_font("Arial", 'B', 11)
+                pdf.cell(190, 8, f"Unidade: {nome_escola}", ln=True, align='L')
+                pdf.ln(5)
+
+                # Conteúdo Agrupado no PDF
+                for (doc, data, resp), group in df_m.groupby(['Documento_Ref', 'Data_Hora', 'ID_Usuario'], sort=False):
+                    pdf.set_fill_color(230, 230, 230)
+                    pdf.set_font("Arial", 'B', 10)
+                    pdf.cell(190, 8, f" NOTA: {doc} | DATA: {data} | RESP: {resp}", 1, 1, 'L', True)
+                    
+                    pdf.set_font("Arial", 'B', 9)
+                    pdf.cell(100, 7, " Item", 1); pdf.cell(30, 7, " Qtd", 1); pdf.cell(30, 7, " Unid", 1); pdf.cell(30, 7, " Tipo", 1); pdf.ln()
+                    
+                    pdf.set_font("Arial", '', 8)
+                    for _, r in group.iterrows():
+                        pdf.cell(100, 6, f" {str(r['Nome_Produto'])[:45]}", 1)
+                        pdf.cell(30, 6, f" {r['Quantidade']}", 1)
+                        pdf.cell(30, 6, f" {r['Unidade_Medida']}", 1)
+                        pdf.cell(30, 6, f" {r['Tipo_Fluxo']}", 1); pdf.ln()
+                    pdf.ln(3)
+
+                pdf_out = pdf.output(dest='S').encode('latin-1')
+                col_d2.download_button("📄 Baixar PDF Institucional", pdf_out, f"Relatorio_{id_escola}.pdf", "application/pdf", use_container_width=True)
         else:
             st.info("Histórico vazio.")

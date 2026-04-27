@@ -16,6 +16,11 @@ def registrar_log(usuario, acao, doc, produto, qtd):
                             columns=['Data_Hora', 'Usuario', 'Acao', 'Documento', 'Produto', 'Quantidade'])
     salvar_dados(log_data, "db_logs", modo='append')
 
+def limpar_texto_pdf(texto):
+    """Higieniza o texto removendo emojis e caracteres que causam crash no FPDF"""
+    if pd.isna(texto) or texto is None: return ""
+    return str(texto).encode('latin-1', 'replace').decode('latin-1')
+
 def renderizar_semed():
     user_data = st.session_state['usuario_dados']
     email_logado = user_data.get('email', str(user_data.get('Email', ''))).strip()
@@ -25,7 +30,6 @@ def renderizar_semed():
     # --- A GRANDE CORREÇÃO: DETECÇÃO DO ADMIN MASTER (st.secrets) ---
     eh_admin_master = False
     try:
-        # Escaneia os secrets do Streamlit para ver se o e-mail logado é o do dono do sistema
         for k, v in st.secrets.items():
             if isinstance(v, str) and v == email_logado:
                 eh_admin_master = True
@@ -36,7 +40,6 @@ def renderizar_semed():
     except Exception:
         pass
 
-    # Força a elevação de privilégio se for o dono, senão, aplica fallback de segurança
     if eh_admin_master:
         perfil_usuario = 'ADMIN'
     elif not perfil_usuario or perfil_usuario == 'NONE':
@@ -76,7 +79,6 @@ def renderizar_semed():
         "📜 Relatórios Globais"
     ]
     
-    # Abas sensíveis e gerenciais abertas APENAS para Administradores
     if perfil_usuario in ['ADMIN', 'ADMINISTRADOR']:
         opcoes_menu.extend([
             "🏫 Gestão de Unidades",
@@ -86,6 +88,15 @@ def renderizar_semed():
         ])
 
     menu = st.sidebar.radio("Navegação SEMED", opcoes_menu)
+
+    # --- LIMPADOR DE SESSÃO FANTASMA (UX) ---
+    if 'menu_anterior_semed' not in st.session_state:
+        st.session_state.menu_anterior_semed = menu
+    if st.session_state.menu_anterior_semed != menu:
+        if 'itens_semed' in st.session_state: st.session_state.itens_semed = [{'id': 0, 'prod': None, 'qtd': 0.0, 'obs': ""}]
+        if 'idx_ex_sem' in st.session_state: st.session_state.idx_ex_sem = []
+        st.session_state.menu_anterior_semed = menu
+
     st.sidebar.divider()
     if st.sidebar.button("🔄 Atualizar Dados da Rede", use_container_width=True):
         st.cache_data.clear(); st.rerun()
@@ -275,15 +286,49 @@ def renderizar_semed():
                                 l_up = row.to_dict(); l_up['Quantidade'] = val_q; novos_v.append(l_up)
 
                     if st.button("💾 SALVAR", type="primary", use_container_width=True):
-                        df_full = carregar_dados("db_movimentacoes")
-                        ids_nota = [str(x) for x in itens['ID_Movimentacao'].tolist()]
+                        # --- MOTOR DE PROTEÇÃO DE ESTOQUE NEGATIVO RETROATIVO ---
+                        saldo_atual = calcular_estoque_atual(id_alvo)
+                        dict_saldos = saldo_atual.set_index('ID_Produto')['Saldo'].to_dict() if not saldo_atual.empty else {}
+                        estoque_invalido = False
+                        mensagens_erro = []
+
+                        # Verifica exclusões de entradas
                         for mid in st.session_state.idx_ex_sem:
-                            it_log = itens[itens['ID_Movimentacao'] == mid]
-                            if not it_log.empty: registrar_log(email_logado, "EXCLUSÃO_SUPORTE", it_log.iloc[0]['Documento_Ref'], it_log.iloc[0]['Nome_Produto'], it_log.iloc[0]['Quantidade'])
-                        df_r = df_full[~df_full['ID_Movimentacao'].astype(str).isin(ids_nota)]
-                        df_n = pd.DataFrame(novos_v).drop(columns=['Nome_Produto', 'Label', 'ID_Lote', 'DT_OBJ', 'index'], errors='ignore')
-                        if salvar_dados(pd.concat([df_r, df_n]).fillna(""), "db_movimentacoes", modo='overwrite'):
-                            st.session_state.idx_ex_sem = []; st.success("Atualizado!"); st.rerun()
+                            it_del = itens[itens['ID_Movimentacao'] == mid]
+                            if not it_del.empty and it_del.iloc[0]['Tipo_Fluxo'] == 'ENTRADA':
+                                prod_id = it_del.iloc[0]['ID_Produto']
+                                qtd_removida = float(it_del.iloc[0]['Quantidade'])
+                                if dict_saldos.get(prod_id, 0) < qtd_removida:
+                                    estoque_invalido = True
+                                    mensagens_erro.append(f"Excluir a entrada de '{it_del.iloc[0]['Nome_Produto']}' deixará o estoque negativo.")
+
+                        # Verifica reduções de entradas
+                        for l_up in novos_v:
+                            it_orig = itens[itens['ID_Movimentacao'] == l_up['ID_Movimentacao']]
+                            if not it_orig.empty and it_orig.iloc[0]['Tipo_Fluxo'] == 'ENTRADA':
+                                qtd_antiga = float(it_orig.iloc[0]['Quantidade'])
+                                qtd_nova = float(l_up['Quantidade'])
+                                if qtd_nova < qtd_antiga:
+                                    diferenca = qtd_antiga - qtd_nova
+                                    prod_id = l_up['ID_Produto']
+                                    if dict_saldos.get(prod_id, 0) < diferenca:
+                                        estoque_invalido = True
+                                        mensagens_erro.append(f"Reduzir a entrada de '{it_orig.iloc[0]['Nome_Produto']}' deixará o estoque negativo.")
+
+                        if estoque_invalido:
+                            for erro in mensagens_erro:
+                                st.error(f"🚫 Ação Bloqueada: {erro}")
+                            st.warning("Verifique se este produto já não foi consumido na unidade.")
+                        else:
+                            df_full = carregar_dados("db_movimentacoes")
+                            ids_nota = [str(x) for x in itens['ID_Movimentacao'].tolist()]
+                            for mid in st.session_state.idx_ex_sem:
+                                it_log = itens[itens['ID_Movimentacao'] == mid]
+                                if not it_log.empty: registrar_log(email_logado, "EXCLUSÃO_SUPORTE", it_log.iloc[0]['Documento_Ref'], it_log.iloc[0]['Nome_Produto'], it_log.iloc[0]['Quantidade'])
+                            df_r = df_full[~df_full['ID_Movimentacao'].astype(str).isin(ids_nota)]
+                            df_n = pd.DataFrame(novos_v).drop(columns=['Nome_Produto', 'Label', 'ID_Lote', 'DT_OBJ', 'index'], errors='ignore')
+                            if salvar_dados(pd.concat([df_r, df_n]).fillna(""), "db_movimentacoes", modo='overwrite'):
+                                st.session_state.idx_ex_sem = []; st.success("Atualizado!"); st.rerun()
             else: st.warning("Nenhum lançamento nos filtros.")
         else: st.warning("Base vazia.")
 
@@ -364,17 +409,26 @@ def renderizar_semed():
                 pdf.cell(190, 8, "PREFEITURA MUNICIPAL DE RAPOSA", ln=True, align='C')
                 pdf.cell(190, 8, "SECRETARIA MUNICIPAL DE EDUCACAO - SEMED", ln=True, align='C')
                 pdf.set_font("Arial", '', 11)
-                pdf.cell(190, 7, "Relatorio Consolidado da Rede" if not f_esc else f"Relatorio ({len(f_esc)} Unidades)", ln=True, align='C')
+                
+                texto_escola = limpar_texto_pdf("Relatorio Consolidado da Rede" if not f_esc else f"Relatorio ({len(f_esc)} Unidades)")
+                pdf.cell(190, 7, texto_escola, ln=True, align='C')
                 pdf.ln(8)
                 
                 for (lote, doc, data, destino, resp), group in grupos:
                     pdf.set_font("Arial", 'B', 9); pdf.set_fill_color(230, 230, 230)
-                    pdf.cell(190, 8, f" ESCOLA: {str(destino)[:25]} | NOTA: {doc} | DATA: {data}", 1, 1, 'L', True)
+                    texto_cabecalho = limpar_texto_pdf(f" ESCOLA: {str(destino)[:25]} | NOTA: {doc} | DATA: {data}")
+                    pdf.cell(190, 8, texto_cabecalho, 1, 1, 'L', True)
+                    
                     pdf.set_font("Arial", 'B', 8); pdf.set_fill_color(255, 255, 255)
                     pdf.cell(90, 7, " Produto", 1); pdf.cell(20, 7, " Qtd", 1); pdf.cell(20, 7, " Unid", 1); pdf.cell(60, 7, " Obs", 1); pdf.ln()
                     pdf.set_font("Arial", '', 8)
                     for _, r in group.iterrows():
-                        pdf.cell(90, 6, f" {str(r['Nome_Produto'])[:40]}", 1); pdf.cell(20, 6, f" {r['Quantidade']}", 1); pdf.cell(20, 6, f" {r.get('Unidade_Medida', '')}", 1); pdf.cell(60, 6, f" {str(r.get('Observacao', ''))[:30]}", 1); pdf.ln()
+                        nome_p = limpar_texto_pdf(f" {str(r['Nome_Produto'])[:40]}")
+                        qtd_p = limpar_texto_pdf(f" {r['Quantidade']}")
+                        un_p = limpar_texto_pdf(f" {r.get('Unidade_Medida', '')}")
+                        obs_p = limpar_texto_pdf(f" {str(r.get('Observacao', ''))[:30]}")
+                        
+                        pdf.cell(90, 6, nome_p, 1); pdf.cell(20, 6, qtd_p, 1); pdf.cell(20, 6, un_p, 1); pdf.cell(60, 6, obs_p, 1); pdf.ln()
                     pdf.ln(3)
                 c_d2.download_button("📄 Baixar PDF Oficial", pdf.output(dest='S').encode('latin-1'), "Relatorio_SEMED.pdf", "application/pdf", use_container_width=True)
             else:

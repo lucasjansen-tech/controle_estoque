@@ -18,6 +18,11 @@ def registrar_log(usuario, acao, doc, produto, qtd):
     ]], columns=['Data_Hora', 'Usuario', 'Acao', 'Documento', 'Produto', 'Quantidade'])
     salvar_dados(log_data, "db_logs", modo='append')
 
+def limpar_texto_pdf(texto):
+    """Higieniza o texto removendo emojis e caracteres que causam crash no FPDF"""
+    if pd.isna(texto) or texto is None: return ""
+    return str(texto).encode('latin-1', 'replace').decode('latin-1')
+
 def renderizar_escola():
     user_data = st.session_state['usuario_dados']
     id_escola = user_data['id_escola']
@@ -37,7 +42,7 @@ def renderizar_escola():
     """, unsafe_allow_html=True)
     st.write("")
 
-    # --- MENU LATERAL (CADASTRO REMOVIDO DA ESCOLA) ---
+    # --- MENU LATERAL ---
     menu = st.sidebar.radio("Navegação Principal", [
         "🏠 Estoque Atual", 
         "📦 Receber Materiais", 
@@ -45,6 +50,15 @@ def renderizar_escola():
         "🍳 Registrar Uso (Consumo)",
         "📜 Relatórios Oficiais"
     ])
+
+    # --- LIMPADOR DE SESSÃO FANTASMA (UX) ---
+    if 'menu_anterior' not in st.session_state:
+        st.session_state.menu_anterior = menu
+    if st.session_state.menu_anterior != menu:
+        # Se trocou de aba, limpa as memórias de preenchimento para não confundir usuários
+        if 'lista_itens' in st.session_state: st.session_state.lista_itens = [{'id': 0, 'prod': None, 'qtd': 0.0, 'obs': ""}]
+        if 'ids_excluir' in st.session_state: st.session_state.ids_excluir = []
+        st.session_state.menu_anterior = menu
 
     st.sidebar.divider()
     if st.sidebar.button("🔄 Sincronizar Sistema", use_container_width=True):
@@ -111,7 +125,9 @@ def renderizar_escola():
                         cat = df_cat[df_cat['Nome_Produto'] == it['prod']].iloc[0]
                         lista_s.append([f"MOV-{t_id}-{idx}", data_r.strftime('%d/%m/%Y'), id_escola, "ENTRADA", origem, nome_escola, cat['ID_Produto'], it['qtd'], cat['Unidade_Medida'], it['obs'], user_data['email'], doc_ref])
                 if salvar_dados(pd.DataFrame(lista_s, columns=['ID_Movimentacao','Data_Hora','ID_Escola','Tipo_Fluxo','Origem','Destino','ID_Produto','Quantidade','Unidade_Medida','Observacao','ID_Usuario','Documento_Ref']), "db_movimentacoes", modo='append'):
-                    st.success("Recebimento Salvo!"); st.session_state.lista_itens = [{'id': 0, 'prod': None, 'qtd': 0.0, 'obs': ""}]; st.rerun()
+                    st.success("Recebimento Salvo!")
+                    st.session_state.lista_itens = [{'id': 0, 'prod': None, 'qtd': 0.0, 'obs': ""}] # Limpa pós-salvamento
+                    st.rerun()
 
     # --- 3. CORRIGIR/ADICIONAR EM NOTA ---
     elif menu == "✏️ Corrigir/Adicionar em Nota":
@@ -133,13 +149,11 @@ def renderizar_escola():
             minhas['ID_Lote'] = minhas['ID_Movimentacao'].astype(str).str.split('-').str[1].fillna("0")
             minhas['DT_OBJ'] = pd.to_datetime(minhas['Data_Hora'], dayfirst=True, errors='coerce')
 
-            # Aplicação dos filtros
             if len(f_data_edit) == 2:
                 minhas = minhas[(minhas['DT_OBJ'].dt.date >= f_data_edit[0]) & (minhas['DT_OBJ'].dt.date <= f_data_edit[1])]
             if f_tipo_edit: 
                 minhas = minhas[minhas['Tipo_Fluxo'].isin(f_tipo_edit)]
             
-            # PROTEÇÃO CONTRA O TYPEERROR: Só executa se o dataframe não estiver vazio após os filtros
             if not minhas.empty:
                 minhas['Label'] = "Nota: " + minhas['Documento_Ref'].astype(str) + " (" + minhas['Data_Hora'].astype(str) + ") - Lote: " + minhas['ID_Lote'].astype(str)
                 sel = st.selectbox("Selecione o Lote / Nota Encontrada:", [None] + sorted(minhas['Label'].unique().tolist(), reverse=True))
@@ -184,19 +198,53 @@ def renderizar_escola():
                                 st.success("Adicionado!"); st.rerun()
 
                     if st.button("💾 SALVAR ALTERAÇÕES NESTA NOTA", type="primary", use_container_width=True):
-                        df_full = carregar_dados("db_movimentacoes")
-                        ids_nota = [str(x) for x in itens['ID_Movimentacao'].tolist()]
-                        
-                        # LOG DE EXCLUSÕES
-                        for mid in st.session_state.ids_excluir:
-                            it_log = itens[itens['ID_Movimentacao'] == mid]
-                            if not it_log.empty: registrar_log(user_data['email'], "EXCLUSÃO", it_log.iloc[0]['Documento_Ref'], it_log.iloc[0]['Nome_Produto'], it_log.iloc[0]['Quantidade'])
+                        # --- MOTOR DE PROTEÇÃO DE ESTOQUE NEGATIVO RETROATIVO ---
+                        saldo_atual = calcular_estoque_atual(id_escola)
+                        dict_saldos = saldo_atual.set_index('ID_Produto')['Saldo'].to_dict() if not saldo_atual.empty else {}
+                        estoque_invalido = False
+                        mensagens_erro = []
 
-                        df_r = df_full[~df_full['ID_Movimentacao'].astype(str).isin(ids_nota)]
-                        df_n = pd.DataFrame(novos_v).drop(columns=['Nome_Produto', 'Label', 'ID_Lote', 'DT_OBJ'], errors='ignore')
-                        
-                        if salvar_dados(pd.concat([df_r, df_n]).fillna(""), "db_movimentacoes", modo='overwrite'):
-                            st.session_state.ids_excluir = []; st.success("Atualizado com Sucesso!"); st.rerun()
+                        # 1. Verifica se a exclusão total de uma ENTRADA vai negativar a prateleira
+                        for mid in st.session_state.ids_excluir:
+                            it_del = itens[itens['ID_Movimentacao'] == mid]
+                            if not it_del.empty and it_del.iloc[0]['Tipo_Fluxo'] == 'ENTRADA':
+                                prod_id = it_del.iloc[0]['ID_Produto']
+                                qtd_removida = float(it_del.iloc[0]['Quantidade'])
+                                if dict_saldos.get(prod_id, 0) < qtd_removida:
+                                    estoque_invalido = True
+                                    mensagens_erro.append(f"Excluir a entrada de '{it_del.iloc[0]['Nome_Produto']}' deixará o estoque negativo.")
+
+                        # 2. Verifica se a redução da quantidade de uma ENTRADA vai negativar a prateleira
+                        for l_up in novos_v:
+                            it_orig = itens[itens['ID_Movimentacao'] == l_up['ID_Movimentacao']]
+                            if not it_orig.empty and it_orig.iloc[0]['Tipo_Fluxo'] == 'ENTRADA':
+                                qtd_antiga = float(it_orig.iloc[0]['Quantidade'])
+                                qtd_nova = float(l_up['Quantidade'])
+                                if qtd_nova < qtd_antiga: # Apenas se reduziu a entrada
+                                    diferenca = qtd_antiga - qtd_nova
+                                    prod_id = l_up['ID_Produto']
+                                    if dict_saldos.get(prod_id, 0) < diferenca:
+                                        estoque_invalido = True
+                                        mensagens_erro.append(f"Reduzir a entrada de '{it_orig.iloc[0]['Nome_Produto']}' deixará o estoque negativo.")
+
+                        if estoque_invalido:
+                            for erro in mensagens_erro:
+                                st.error(f"🚫 Ação Bloqueada: {erro}")
+                            st.warning("Verifique se este produto já não foi consumido ou distribuído.")
+                        else:
+                            # Se passou pela segurança matemática, prossegue com o salvamento
+                            df_full = carregar_dados("db_movimentacoes")
+                            ids_nota = [str(x) for x in itens['ID_Movimentacao'].tolist()]
+                            
+                            for mid in st.session_state.ids_excluir:
+                                it_log = itens[itens['ID_Movimentacao'] == mid]
+                                if not it_log.empty: registrar_log(user_data['email'], "EXCLUSÃO", it_log.iloc[0]['Documento_Ref'], it_log.iloc[0]['Nome_Produto'], it_log.iloc[0]['Quantidade'])
+
+                            df_r = df_full[~df_full['ID_Movimentacao'].astype(str).isin(ids_nota)]
+                            df_n = pd.DataFrame(novos_v).drop(columns=['Nome_Produto', 'Label', 'ID_Lote', 'DT_OBJ'], errors='ignore')
+                            
+                            if salvar_dados(pd.concat([df_r, df_n]).fillna(""), "db_movimentacoes", modo='overwrite'):
+                                st.session_state.ids_excluir = []; st.success("Atualizado com Sucesso!"); st.rerun()
             else:
                 st.warning("Nenhum lançamento encontrado com os filtros aplicados.")
 
@@ -225,7 +273,7 @@ def renderizar_escola():
                                     columns=['ID_Movimentacao','Data_Hora','ID_Escola','Tipo_Fluxo','Origem','Destino','ID_Produto','Quantidade','Unidade_Medida','Observacao','ID_Usuario','Documento_Ref'])
                 salvar_dados(df_s, "db_movimentacoes", modo='append'); st.success("Saída Registrada!"); st.rerun()
 
-# --- 5. RELATÓRIOS OFICIAIS (FILTROS, AGRUPAMENTO, BANNER E PDF) ---
+    # --- 5. RELATÓRIOS OFICIAIS (FILTROS E PDF BLINDADO) ---
     elif menu == "📜 Relatórios Oficiais":
         st.subheader("📜 Histórico Consolidado e Filtrado")
         df_m = carregar_dados("db_movimentacoes")
@@ -234,7 +282,6 @@ def renderizar_escola():
             df_m = pd.merge(df_m, df_cat[['ID_Produto', 'Nome_Produto']], on='ID_Produto', how='left')
             df_m['DT_OBJ'] = pd.to_datetime(df_m['Data_Hora'], dayfirst=True, errors='coerce')
             
-            # --- FILTROS DE BUSCA ---
             with st.container(border=True):
                 st.markdown("**🔍 Filtros do Relatório**")
                 c1, c2 = st.columns(2)
@@ -264,36 +311,41 @@ def renderizar_escola():
             csv = df_m.drop(columns=['DT_OBJ', 'Lote', 'Nome_Produto'], errors='ignore').to_csv(index=False).encode('utf-8-sig')
             c_d1.download_button("📊 Baixar Excel Detalhado", csv, f"Relatorio_{id_escola}.csv", use_container_width=True)
             
-            # --- GERAÇÃO DO PDF OFICIAL ---
             if FPDF:
                 pdf = FPDF()
                 pdf.add_page()
                 
-                # Inserção do Banner (Tamanho 190 mantém as proporções na margem do A4)
                 try:
-                    # Assume que 'Banner.png' está na mesma pasta raiz de onde o app é executado
                     pdf.image("Banner.png", x=10, y=10, w=190)
-                    pdf.set_y(50) # Desce o cursor para não escrever em cima da imagem (Ajuste esse valor se a imagem for muito alta/baixa)
+                    pdf.set_y(50)
                 except Exception:
-                    # Se a imagem não for encontrada, ignora e começa do topo para não travar o app
                     pdf.set_y(10)
 
-                # Cabeçalho da Hierarquia com fontes do mesmo tamanho
                 pdf.set_font("Arial", 'B', 14)
                 pdf.cell(190, 8, "PREFEITURA MUNICIPAL DE RAPOSA", ln=True, align='C')
                 pdf.cell(190, 8, "SECRETARIA MUNICIPAL DE EDUCACAO - SEMED", ln=True, align='C')
                 
                 pdf.set_font("Arial", '', 11)
-                pdf.cell(190, 7, f"Controle da Unidade: {nome_escola}", ln=True, align='C')
+                pdf.cell(190, 7, limpar_texto_pdf(f"Controle da Unidade: {nome_escola}"), ln=True, align='C')
                 pdf.ln(8)
                 
-                # Listagem agrupada de itens
                 for (lote, doc, data, resp), group in grupos:
                     pdf.set_font("Arial", 'B', 9); pdf.set_fill_color(240, 240, 240)
-                    pdf.cell(190, 8, f" NOTA: {doc} | DATA: {data} | RESP: {resp}", 1, 1, 'L', True)
+                    texto_cabecalho = limpar_texto_pdf(f" NOTA: {doc} | DATA: {data} | RESP: {resp}")
+                    pdf.cell(190, 8, texto_cabecalho, 1, 1, 'L', True)
+                    
                     pdf.set_font("Arial", '', 8)
                     for _, r in group.iterrows():
-                        pdf.cell(90, 6, f" {str(r['Nome_Produto'])[:40]}", 1); pdf.cell(20, 6, f" {r['Quantidade']}", 1); pdf.cell(20, 6, f" {r.get('Unidade_Medida', '')}", 1); pdf.cell(60, 6, f" {str(r.get('Observacao', ''))[:30]}", 1); pdf.ln()
+                        nome_p = limpar_texto_pdf(f" {str(r['Nome_Produto'])[:40]}")
+                        qtd_p = limpar_texto_pdf(f" {r['Quantidade']}")
+                        un_p = limpar_texto_pdf(f" {r.get('Unidade_Medida', '')}")
+                        obs_p = limpar_texto_pdf(f" {str(r.get('Observacao', ''))[:30]}")
+                        
+                        pdf.cell(90, 6, nome_p, 1)
+                        pdf.cell(20, 6, qtd_p, 1)
+                        pdf.cell(20, 6, un_p, 1)
+                        pdf.cell(60, 6, obs_p, 1)
+                        pdf.ln()
                     pdf.ln(2)
                 
                 pdf_bytes = pdf.output(dest='S').encode('latin-1')

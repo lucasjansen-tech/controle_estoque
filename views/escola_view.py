@@ -59,7 +59,7 @@ def renderizar_escola():
         "📜 Relatórios Oficiais"
     ])
 
-    # --- LIMPADOR DE SESSÃO FANTASMA (UX) ---
+# --- LIMPADOR DE SESSÃO FANTASMA (UX) ---
     if 'menu_anterior' not in st.session_state:
         st.session_state.menu_anterior = menu
     if st.session_state.menu_anterior != menu:
@@ -68,9 +68,15 @@ def renderizar_escola():
         st.session_state.menu_anterior = menu
 
     st.sidebar.divider()
+    
     if st.sidebar.button("🔄 Sincronizar Sistema", use_container_width=True):
         st.cache_data.clear()
         st.rerun()
+
+    # --- NOVO: BOTÃO DE SAIR ---
+    if st.sidebar.button("🚪 Sair do Sistema", type="primary", use_container_width=True):
+        st.session_state.clear()  # Apaga todos os dados do usuário da memória
+        st.rerun()  # Força a página a recarregar, voltando para o app.py (Tela de Login)
 
     # --- 1. RAIO-X DA ESCOLA ---
     if menu == "🏠 Raio-X da Escola":

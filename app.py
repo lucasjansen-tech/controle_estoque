@@ -1,59 +1,61 @@
 import streamlit as st
-from modules.auth import inicializar_sessao, realizar_login, realizar_logout
-from views.semed_view import renderizar_semed
 from views.escola_view import renderizar_escola
-
-# Configuração da Página (Deve ser a primeira linha de código Streamlit)
-st.set_page_config(
-    page_title="Sistema de Estoque - SEMED Raposa",
-    page_icon="📦",
-    layout="wide",
-    initial_sidebar_state="expanded"
-)
-
-# Inicializa as variáveis de controle de acesso
-inicializar_sessao()
+from views.semed_view import renderizar_semed
 
 def main():
-    # --- TELA DE LOGIN ---
-    if not st.session_state['autenticado']:
-        st.container()
-        col1, col2, col3 = st.columns([1, 2, 1])
-        
-        with col2:
-            st.title("🔐 Acesso ao Sistema")
-            st.write("Insira suas credenciais para gerenciar o estoque da rede.")
-            
-            with st.form("form_login"):
-                email = st.text_input("E-mail ou Usuário")
-                senha = st.text_input("Senha", type="password")
-                botao_entrar = st.form_submit_button("Entrar", use_container_width=True)
-                
-                if botao_entrar:
-                    if realizar_login(email, senha):
-                        st.success("Login realizado com sucesso!")
-                        st.rerun()
-                    else:
-                        st.error("Credenciais inválidas. Verifique seu e-mail e senha.")
+    st.set_page_config(page_title="Gestão de Estoque - SEMED Raposa", page_icon="📦", layout="wide")
 
-    # --- TELA LOGADA ---
+    # Verifica se o usuário já está logado na sessão
+    if 'usuario_dados' not in st.session_state or not st.session_state['usuario_dados']:
+        
+        # ==========================================================
+        # COLOQUE A SUA LÓGICA DE TELA DE LOGIN AQUI
+        # (Os campos de st.text_input para e-mail e senha, e a 
+        #  consulta ao db_usuarios para validar o acesso).
+        # Após validar, não se esqueça de salvar os dados na sessão:
+        # st.session_state['usuario_dados'] = {'Email': email_digitado, 'Perfil': perfil_banco, 'ID_Escola': id_escola_banco}
+        # ==========================================================
+        
+        st.info("Por favor, faça o login para acessar o sistema.")
+        return
+
+    # --- O ROTEADOR CORRIGIDO E BLINDADO ---
+    user_data = st.session_state['usuario_dados']
+    email_logado = str(user_data.get('email', user_data.get('Email', ''))).strip()
+    
+    # Pega o perfil ignorando se veio maiúsculo ou minúsculo, e remove espaços
+    perfil_bruto = user_data.get('perfil', user_data.get('Perfil', ''))
+    perfil_usuario = str(perfil_bruto).strip().upper()
+
+    # Validação de Segurança Extra: Verifica se o e-mail logado é o Admin do st.secrets
+    eh_admin_master = False
+    try:
+        for k, v in st.secrets.items():
+            if isinstance(v, str) and v == email_logado:
+                eh_admin_master = True
+            elif isinstance(v, dict):
+                for sub_v in v.values():
+                    if isinstance(sub_v, str) and sub_v == email_logado:
+                        eh_admin_master = True
+    except Exception:
+        pass
+
+    # Força a elevação se for o dono do sistema
+    if eh_admin_master:
+        perfil_usuario = 'ADMIN'
+
+    # Direcionamento das Telas (Routing)
+    if perfil_usuario == 'ESCOLA':
+        renderizar_escola()
+        
+    elif perfil_usuario in ['SEMED', 'COORDENADOR', 'ADMIN', 'ADMINISTRADOR']:
+        renderizar_semed()
+        
     else:
-        # Barra Lateral de Controle
-        with st.sidebar:
-            st.image("https://encrypted-tbn0.gstatic.com/images?q=tbn:ANd9GcR0Y6I7k-Fj-5vF-N4S2W_rI7T0G3N-u-X8_w&s", width=100) # Exemplo de Logo
-            st.write(f"👤 **{st.session_state['usuario_dados']['email']}**")
-            st.write(f"🏷️ Perfil: {st.session_state['usuario_dados']['perfil']}")
-            
-            if st.button("🚪 Sair do Sistema", use_container_width=True):
-                realizar_logout()
-
-        # Roteamento por Perfil
-        perfil = st.session_state['usuario_dados']['perfil']
-        
-        if perfil == "SEMED":
-            renderizar_semed()
-        elif perfil == "Escola":
-            renderizar_escola()
+        st.error(f"O perfil de acesso '{perfil_usuario}' não é válido no sistema.")
+        if st.button("Sair e Tentar Novamente"):
+            st.session_state.clear()
+            st.rerun()
 
 if __name__ == "__main__":
     main()

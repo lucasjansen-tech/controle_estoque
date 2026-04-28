@@ -98,8 +98,14 @@ def renderizar_semed():
         st.session_state.menu_anterior_semed = menu
 
     st.sidebar.divider()
+    
     if st.sidebar.button("🔄 Atualizar Dados da Rede", use_container_width=True):
-        st.cache_data.clear(); st.rerun()
+        st.cache_data.clear()
+        st.rerun()
+        
+    if st.sidebar.button("🚪 Sair do Sistema", type="primary", use_container_width=True):
+        st.session_state.clear()
+        st.rerun()
 
     # --- 1. VISÃO GERAL DA REDE (DASHBOARDS ANALÍTICOS) ---
     if menu == "📊 Visão Geral da Rede":
@@ -220,10 +226,13 @@ def renderizar_semed():
                 st.session_state.itens_semed[i]['qtd'] = cq.number_input(unid, min_value=0.0, key=f"sr_q_{item['id']}")
                 st.session_state.itens_semed[i]['obs'] = co.text_input("Obs", placeholder="Fardo/Saca", key=f"sr_o_{item['id']}")
                 if len(st.session_state.itens_semed) > 1:
-                    if cd.button("❌", key=f"sr_del_{item['id']}"): st.session_state.itens_semed.pop(i); st.rerun()
+                    if cd.button("❌", key=f"sr_del_{item['id']}"):
+                        st.session_state.itens_semed.pop(i)
+                        st.rerun()
 
         if st.button("➕ Adicionar Produto"):
-            st.session_state.itens_semed.append({'id': len(st.session_state.itens_semed)+1, 'prod': None, 'qtd': 0.0, 'obs': ""}); st.rerun()
+            st.session_state.itens_semed.append({'id': len(st.session_state.itens_semed)+1, 'prod': None, 'qtd': 0.0, 'obs': ""})
+            st.rerun()
 
         if st.button("✅ SALVAR DISTRIBUIÇÃO", type="primary", use_container_width=True):
             if doc_ref:
@@ -234,8 +243,11 @@ def renderizar_semed():
                         cat = df_cat[df_cat['Nome_Produto'] == it['prod']].iloc[0]
                         lista_s.append([f"MOV-{t_id}-{idx}", data_r.strftime('%d/%m/%Y'), id_alvo, "ENTRADA", origem, escola_alvo, cat['ID_Produto'], it['qtd'], cat['Unidade_Medida'], it['obs'], email_logado, doc_ref])
                 if salvar_dados(pd.DataFrame(lista_s, columns=['ID_Movimentacao','Data_Hora','ID_Escola','Tipo_Fluxo','Origem','Destino','ID_Produto','Quantidade','Unidade_Medida','Observacao','ID_Usuario','Documento_Ref']), "db_movimentacoes", modo='append'):
-                    st.success(f"Salvo!"); st.session_state.itens_semed = [{'id': 0, 'prod': None, 'qtd': 0.0, 'obs': ""}]; st.rerun()
-            else: st.error("Insira o Documento.")
+                    st.success(f"Salvo!")
+                    st.session_state.itens_semed = [{'id': 0, 'prod': None, 'qtd': 0.0, 'obs': ""}]
+                    st.rerun()
+            else:
+                st.error("Insira o Documento.")
 
     # --- 4. OPERAÇÃO: CORRIGIR NOTA ---
     elif menu == "✏️ Operação: Corrigir Nota":
@@ -278,12 +290,20 @@ def renderizar_semed():
                             val_q = c2.number_input(f"Qtd ({row['Unidade_Medida']})", value=float(row['Quantidade']), key=f"se_q_{row['ID_Movimentacao']}", disabled=is_ex)
                             if trava:
                                 if not is_ex:
-                                    if c3.button("🗑️", key=f"se_ex_{idx}"): st.session_state.idx_ex_sem.append(str(row['ID_Movimentacao'])); st.rerun()
+                                    if c3.button("🗑️", key=f"se_ex_{idx}"):
+                                        st.session_state.idx_ex_sem.append(str(row['ID_Movimentacao']))
+                                        st.rerun()
                                 else:
-                                    if c3.button("🔄", key=f"se_un_{idx}"): st.session_state.idx_ex_sem.remove(str(row['ID_Movimentacao'])); st.rerun()
-                            else: c3.write("🔒")
+                                    if c3.button("🔄", key=f"se_un_{idx}"):
+                                        st.session_state.idx_ex_sem.remove(str(row['ID_Movimentacao']))
+                                        st.rerun()
+                            else:
+                                c3.write("🔒")
+                            
                             if not is_ex:
-                                l_up = row.to_dict(); l_up['Quantidade'] = val_q; novos_v.append(l_up)
+                                l_up = row.to_dict()
+                                l_up['Quantidade'] = val_q
+                                novos_v.append(l_up)
 
                     if st.button("💾 SALVAR", type="primary", use_container_width=True):
                         # --- MOTOR DE PROTEÇÃO DE ESTOQUE NEGATIVO RETROATIVO ---
@@ -324,13 +344,19 @@ def renderizar_semed():
                             ids_nota = [str(x) for x in itens['ID_Movimentacao'].tolist()]
                             for mid in st.session_state.idx_ex_sem:
                                 it_log = itens[itens['ID_Movimentacao'] == mid]
-                                if not it_log.empty: registrar_log(email_logado, "EXCLUSÃO_SUPORTE", it_log.iloc[0]['Documento_Ref'], it_log.iloc[0]['Nome_Produto'], it_log.iloc[0]['Quantidade'])
+                                if not it_log.empty:
+                                    registrar_log(email_logado, "EXCLUSÃO_SUPORTE", it_log.iloc[0]['Documento_Ref'], it_log.iloc[0]['Nome_Produto'], it_log.iloc[0]['Quantidade'])
+                            
                             df_r = df_full[~df_full['ID_Movimentacao'].astype(str).isin(ids_nota)]
                             df_n = pd.DataFrame(novos_v).drop(columns=['Nome_Produto', 'Label', 'ID_Lote', 'DT_OBJ', 'index'], errors='ignore')
                             if salvar_dados(pd.concat([df_r, df_n]).fillna(""), "db_movimentacoes", modo='overwrite'):
-                                st.session_state.idx_ex_sem = []; st.success("Atualizado!"); st.rerun()
-            else: st.warning("Nenhum lançamento nos filtros.")
-        else: st.warning("Base vazia.")
+                                st.session_state.idx_ex_sem = []
+                                st.success("Atualizado!")
+                                st.rerun()
+            else:
+                st.warning("Nenhum lançamento nos filtros.")
+        else:
+            st.warning("Base vazia.")
 
     # --- 5. OPERAÇÃO: CONSUMO ---
     elif menu == "🍳 Operação: Consumo Escolar":
@@ -357,9 +383,11 @@ def renderizar_semed():
             if q_u > 0 and q_u <= s_item:
                 df_s = pd.DataFrame([[f"SAI-{datetime.now().strftime('%H%M%S')}", d_u.strftime('%d/%m/%Y'), id_alvo, "SAÍDA", escola_alvo, "CONSUMO INTERNO", cat_u['ID_Produto'], q_u, cat_u['Unidade_Medida'], o_u, email_logado, "BAIXA SEMED"]], 
                                     columns=['ID_Movimentacao','Data_Hora','ID_Escola','Tipo_Fluxo','Origem','Destino','ID_Produto','Quantidade','Unidade_Medida','Observacao','ID_Usuario','Documento_Ref'])
-                salvar_dados(df_s, "db_movimentacoes", modo='append'); st.success("Baixa Executada!"); st.rerun()
+                salvar_dados(df_s, "db_movimentacoes", modo='append')
+                st.success("Baixa Executada!")
+                st.rerun()
 
-# --- 6. RELATÓRIOS GLOBAIS (VERSÃO FINAL BLINDADA) ---
+    # --- 6. RELATÓRIOS GLOBAIS ---
     elif menu == "📜 Relatórios Globais":
         st.subheader("📜 Extrator Consolidado da Rede")
         if not df_mov.empty and 'ID_Escola' in df_mov.columns:
@@ -375,8 +403,10 @@ def renderizar_semed():
                 f_tipo = c3.multiselect("Fluxo", ["ENTRADA", "SAÍDA", "TRANSFERÊNCIA"])
 
             # 1. Aplicação de Filtros
-            if len(f_data) == 2: df_rel = df_rel[(df_rel['DT_OBJ'].dt.date >= f_data[0]) & (df_rel['DT_OBJ'].dt.date <= f_data[1])]
-            if f_tipo: df_rel = df_rel[df_rel['Tipo_Fluxo'].isin(f_tipo)]
+            if len(f_data) == 2:
+                df_rel = df_rel[(df_rel['DT_OBJ'].dt.date >= f_data[0]) & (df_rel['DT_OBJ'].dt.date <= f_data[1])]
+            if f_tipo:
+                df_rel = df_rel[df_rel['Tipo_Fluxo'].isin(f_tipo)]
             if f_esc: 
                 ids_f = df_esc[df_esc['Nome_Escola'].isin(f_esc)]['ID_Escola'].tolist()
                 df_rel = df_rel[df_rel['ID_Escola'].isin(ids_f)]
@@ -398,18 +428,23 @@ def renderizar_semed():
             df_rel = df_rel.sort_values(by=['Destino', 'DT_OBJ'], ascending=[True, False])
             
             escolas_presentes = df_rel['Destino'].unique()
-            st.write(f"**Escolas encontradas:** {len(escolas_presentes)}")
+            st.write(f"**Escolas encontradas neste filtro:** {len(escolas_presentes)}")
             st.divider()
 
             for escola in escolas_presentes:
-                st.markdown(f"<h3 style='color:#004a99;'>🏫 {escola}</h3>", unsafe_allow_html=True)
+                st.markdown(f"<h3 style='color:#004a99; margin-top:10px;'>🏫 {escola}</h3>", unsafe_allow_html=True)
+                
                 df_escola = df_rel[df_rel['Destino'] == escola]
                 grupos = df_escola.groupby(['Lote', 'Documento_Ref', 'Data_Hora', 'Responsavel'], sort=False)
                 
                 for (lote, doc, data, resp), group in grupos:
                     with st.container(border=True):
-                        st.markdown(f"📄 **Nota:** `{doc}` | 🗓️ **Data:** {data} | 👤 **Resp:** `{resp}`")
-                        st.dataframe(group[['Nome_Produto', 'Quantidade', 'Unidade_Medida', 'Observacao', 'Tipo_Fluxo']], use_container_width=True, hide_index=True)
+                        st.markdown(f"📄 **Nota/Documento:** `{doc}` | 🗓️ **Data:** {data} | 👤 **Responsável:** `{resp}`")
+                        cols_show = ['Nome_Produto', 'Quantidade']
+                        if 'Unidade_Medida' in group.columns: cols_show.append('Unidade_Medida')
+                        if 'Observacao' in group.columns: cols_show.append('Observacao')
+                        cols_show.append('Tipo_Fluxo')
+                        st.dataframe(group[cols_show], use_container_width=True, hide_index=True)
 
             c_d1, c_d2 = st.columns(2)
             csv_f = df_rel.drop(columns=['DT_OBJ', 'Lote', 'Nome_Produto'], errors='ignore').to_csv(index=False).encode('utf-8-sig')
@@ -418,29 +453,58 @@ def renderizar_semed():
             if FPDF:
                 pdf = FPDF()
                 pdf.add_page()
-                try: pdf.image("Banner.png", x=10, y=10, w=190); pdf.set_y(50) 
-                except: pdf.set_y(10)
-                pdf.set_font("Arial", 'B', 14); pdf.cell(190, 8, "PREFEITURA MUNICIPAL DE RAPOSA", ln=True, align='C')
+                try:
+                    pdf.image("Banner.png", x=10, y=10, w=190)
+                    pdf.set_y(50) 
+                except:
+                    pdf.set_y(10)
+
+                pdf.set_font("Arial", 'B', 14)
+                pdf.cell(190, 8, "PREFEITURA MUNICIPAL DE RAPOSA", ln=True, align='C')
                 pdf.cell(190, 8, "SECRETARIA MUNICIPAL DE EDUCACAO - SEMED", ln=True, align='C')
-                pdf.set_font("Arial", '', 11); pdf.cell(190, 7, limpar_texto_pdf(f"Exportação: {nome_arq.replace('_', ' ')}"), ln=True, align='C'); pdf.ln(8)
+                pdf.set_font("Arial", '', 11)
+                
+                texto_escola = limpar_texto_pdf("Relatorio Consolidado da Rede" if not f_esc else f"Relatorio: {f_esc[0]}")
+                pdf.cell(190, 7, texto_escola, ln=True, align='C')
+                pdf.ln(8)
                 
                 for escola in escolas_presentes:
-                    pdf.set_font("Arial", 'B', 11); pdf.set_fill_color(200, 220, 255)
-                    pdf.cell(190, 8, limpar_texto_pdf(f" UNIDADE: {escola}"), 1, 1, 'C', True); pdf.ln(3)
+                    pdf.set_font("Arial", 'B', 11)
+                    pdf.set_fill_color(200, 220, 255) 
+                    pdf.cell(190, 8, limpar_texto_pdf(f" UNIDADE: {escola}"), 1, 1, 'C', True)
+                    pdf.ln(3)
+                    
                     df_escola = df_rel[df_rel['Destino'] == escola]
                     grupos_pdf = df_escola.groupby(['Lote', 'Documento_Ref', 'Data_Hora', 'Responsavel'], sort=False)
+                    
                     for (lote, doc, data, resp), group in grupos_pdf:
-                        pdf.set_font("Arial", 'B', 9); pdf.set_fill_color(240, 240, 240)
-                        pdf.cell(190, 8, limpar_texto_pdf(f" NOTA: {doc} | DATA: {data} | RESP: {resp}"), 1, 1, 'L', True)
-                        pdf.set_font("Arial", 'B', 8); pdf.set_fill_color(255, 255, 255)
-                        pdf.cell(90, 7, " Produto", 1); pdf.cell(20, 7, " Qtd", 1); pdf.cell(20, 7, " Unid", 1); pdf.cell(60, 7, " Obs", 1); pdf.ln()
+                        pdf.set_font("Arial", 'B', 9)
+                        pdf.set_fill_color(240, 240, 240)
+                        texto_cabecalho = limpar_texto_pdf(f" NOTA: {doc} | DATA: {data} | RESP: {resp}")
+                        pdf.cell(190, 8, texto_cabecalho, 1, 1, 'L', True)
+                        
+                        pdf.set_font("Arial", 'B', 8)
+                        pdf.set_fill_color(255, 255, 255)
+                        pdf.cell(90, 7, " Produto", 1); pdf.cell(20, 7, " Qtd", 1); pdf.cell(20, 7, " Unid", 1); pdf.cell(60, 7, " Obs", 1)
+                        pdf.ln()
+                        
                         pdf.set_font("Arial", '', 8)
                         for _, r in group.iterrows():
-                            pdf.cell(90, 6, limpar_texto_pdf(f" {str(r['Nome_Produto'])[:40]}"), 1)
-                            pdf.cell(20, 6, str(r['Quantidade']), 1); pdf.cell(20, 6, limpar_texto_pdf(r.get('Unidade_Medida', '')), 1)
-                            pdf.cell(60, 6, limpar_texto_pdf(str(r.get('Observacao', ''))[:30]), 1); pdf.ln()
+                            nome_p = limpar_texto_pdf(f" {str(r['Nome_Produto'])[:40]}")
+                            qtd_p = limpar_texto_pdf(f" {r['Quantidade']}")
+                            un_p = limpar_texto_pdf(f" {r.get('Unidade_Medida', '')}")
+                            obs_p = limpar_texto_pdf(f" {str(r.get('Observacao', ''))[:30]}")
+                            
+                            pdf.cell(90, 6, nome_p, 1)
+                            pdf.cell(20, 6, qtd_p, 1)
+                            pdf.cell(20, 6, un_p, 1)
+                            pdf.cell(60, 6, obs_p, 1)
+                            pdf.ln()
                         pdf.ln(4)
+                
                 c_d2.download_button("📄 Baixar PDF Oficial", pdf.output(dest='S').encode('latin-1'), f"{nome_arq}.pdf", "application/pdf", use_container_width=True)
+            else:
+                c_d2.warning("Instale 'fpdf' para gerar o PDF.")
 
     # --- 7. ADMIN: GESTÃO DE UNIDADES ---
     elif menu == "🏫 Gestão de Unidades":
@@ -456,7 +520,9 @@ def renderizar_semed():
             f_esc_nome = st.text_input("🔍 Buscar Escola por Nome:")
         
         df_esc_view = df_esc.copy()
-        if f_esc_nome: df_esc_view = df_esc_view[df_esc_view['Nome_Escola'].str.contains(f_esc_nome, case=False, na=False)]
+        if f_esc_nome:
+            df_esc_view = df_esc_view[df_esc_view['Nome_Escola'].str.contains(f_esc_nome, case=False, na=False)]
+            
         st.dataframe(df_esc_view, use_container_width=True, hide_index=True)
         
         tab_add, tab_edit = st.tabs(["➕ Adicionar Escola", "✏️ Editar Escola Existente"])
@@ -470,8 +536,11 @@ def renderizar_semed():
                     if n_esc_nome:
                         novo_id = f"ESC-{datetime.now().strftime('%H%M%S')}"
                         nova_e = pd.DataFrame([[novo_id, n_esc_nome, n_esc_tipo]], columns=['ID_Escola', 'Nome_Escola', 'Tipo_Escola'])
-                        salvar_dados(pd.concat([df_esc, nova_e]), "db_escolas", modo='overwrite'); st.success("Cadastrada!"); st.rerun()
-                    else: st.error("O nome é obrigatório.")
+                        salvar_dados(pd.concat([df_esc, nova_e]), "db_escolas", modo='overwrite')
+                        st.success("Cadastrada!")
+                        st.rerun()
+                    else:
+                        st.error("O nome é obrigatório.")
                     
         with tab_edit:
             esc_editar = st.selectbox("Selecione a Escola para Editar", [None] + df_esc['Nome_Escola'].sort_values().tolist())
@@ -491,13 +560,15 @@ def renderizar_semed():
                     if st.form_submit_button("Salvar Alterações na Escola"):
                         df_esc_resto = df_esc[df_esc['ID_Escola'] != dados_esc['ID_Escola']]
                         df_esc_up = pd.DataFrame([[dados_esc['ID_Escola'], up_nome, up_tipo]], columns=['ID_Escola', 'Nome_Escola', 'Tipo_Escola'])
-                        salvar_dados(pd.concat([df_esc_resto, df_esc_up]), "db_escolas", modo='overwrite'); st.success("Atualizado!"); st.rerun()
+                        salvar_dados(pd.concat([df_esc_resto, df_esc_up]), "db_escolas", modo='overwrite')
+                        st.success("Atualizado!")
+                        st.rerun()
 
-# --- 8. ADMIN: GESTÃO DE USUÁRIOS ---
+    # --- 8. ADMIN: GESTÃO DE USUÁRIOS ---
     elif menu == "👥 Gestão de Usuários":
         st.subheader("👥 Controle de Acessos e Perfis")
         
-        # PREVENÇÃO: Se a coluna Nome não existir na planilha, cria ela como backup
+        # PREVENÇÃO: Se a coluna Nome não existir, cria ela como backup
         if not df_usuarios.empty and 'Nome' not in df_usuarios.columns:
             df_usuarios['Nome'] = df_usuarios['Email']
             
@@ -522,7 +593,8 @@ def renderizar_semed():
             mask_nome = df_u_view.get('Nome', pd.Series("")).str.contains(f_u_nome, case=False, na=False)
             df_u_view = df_u_view[mask_email | mask_nome]
             
-        if f_u_perfil != "Todos": df_u_view = df_u_view[df_u_view['Perfil'] == f_u_perfil]
+        if f_u_perfil != "Todos":
+            df_u_view = df_u_view[df_u_view['Perfil'] == f_u_perfil]
         if f_u_esc != "Todas":
             id_esc_f = df_esc[df_esc['Nome_Escola'] == f_u_esc]['ID_Escola'].values[0]
             df_u_view = df_u_view[df_u_view['ID_Escola'] == id_esc_f]
@@ -535,7 +607,6 @@ def renderizar_semed():
             with st.container(border=True):
                 col_u1, col_u2, col_u3, col_u4 = st.columns([2, 1, 2, 1])
                 
-                # Mostra o Nome em negrito e o e-mail menorzinho embaixo
                 nome_exibicao = u_row.get('Nome', u_row['Email'])
                 col_u1.markdown(f"**{nome_exibicao}**<br><span style='color:gray;font-size:0.8em;'>{u_row['Email']}</span>", unsafe_allow_html=True)
                 col_u2.markdown(f"**Perfil:** `{u_row['Perfil']}`")
@@ -550,7 +621,8 @@ def renderizar_semed():
                     if col_u4.button("🗑️ Excluir", key=f"del_u_{u_row['ID_Usuario']}"):
                         df_u_novo = df_usuarios[df_usuarios['ID_Usuario'] != u_row['ID_Usuario']]
                         salvar_dados(df_u_novo, "db_usuarios", modo='overwrite')
-                        st.warning("Usuário removido!"); st.rerun()
+                        st.warning("Usuário removido!")
+                        st.rerun()
 
         tab_u_add, tab_u_edit = st.tabs(["➕ Cadastrar Usuário", "✏️ Editar Credenciais"])
         lista_escolas_u = ["NENHUMA (Acesso Global)"] + df_esc['ID_Escola'].tolist()
@@ -568,8 +640,11 @@ def renderizar_semed():
                 if st.form_submit_button("Salvar Usuário"):
                     if u_nome and u_email and u_senha:
                         novo_u = pd.DataFrame([[f"USR-{datetime.now().strftime('%H%M%S')}", u_nome, u_email, u_senha, u_perfil, u_esc]], columns=['ID_Usuario', 'Nome', 'Email', 'Senha_Hash', 'Perfil', 'ID_Escola'])
-                        salvar_dados(pd.concat([df_usuarios, novo_u]), "db_usuarios", modo='overwrite'); st.success("Cadastrado!"); st.rerun()
-                    else: st.error("Preencha Nome, E-mail e Senha.")
+                        salvar_dados(pd.concat([df_usuarios, novo_u]), "db_usuarios", modo='overwrite')
+                        st.success("Cadastrado!")
+                        st.rerun()
+                    else:
+                        st.error("Preencha Nome, E-mail e Senha.")
 
         with tab_u_edit:
             usr_ed = st.selectbox("Selecione o Usuário para Alterar", [None] + df_usuarios['Email'].sort_values().tolist())
@@ -592,7 +667,9 @@ def renderizar_semed():
                         senha_final = up_senha if up_senha else dados_usr['Senha_Hash']
                         df_u_resto = df_usuarios[df_usuarios['ID_Usuario'] != dados_usr['ID_Usuario']]
                         df_u_up = pd.DataFrame([[dados_usr['ID_Usuario'], up_nome, up_email, senha_final, up_perfil, up_esc]], columns=['ID_Usuario', 'Nome', 'Email', 'Senha_Hash', 'Perfil', 'ID_Escola'])
-                        salvar_dados(pd.concat([df_u_resto, df_u_up]), "db_usuarios", modo='overwrite'); st.success("Usuário atualizado!"); st.rerun()
+                        salvar_dados(pd.concat([df_u_resto, df_u_up]), "db_usuarios", modo='overwrite')
+                        st.success("Usuário atualizado!")
+                        st.rerun()
 
     # --- 9. ADMIN: GERENCIAR CATÁLOGO ---
     elif menu == "⚙️ Gerenciar Catálogo":
@@ -617,7 +694,8 @@ def renderizar_semed():
                 if st.form_submit_button("Inserir Produto"):
                     if n_id and n_nome:
                         salvar_dados(pd.concat([df_cat, pd.DataFrame([[n_id, n_nome, n_cat, n_un]], columns=['ID_Produto', 'Nome_Produto', 'Categoria', 'Unidade_Medida'])]), "db_catalogo", modo='overwrite')
-                        st.success("Atualizado!"); st.rerun()
+                        st.success("Atualizado!")
+                        st.rerun()
 
         with tab2:
             st.info("Adicione múltiplos produtos simultaneamente.")
@@ -629,14 +707,21 @@ def renderizar_semed():
                 st.session_state.lote_cat[i]['cat'] = c3.selectbox("Cat", ["Agricultura Familiar", "Alimentação Seca", "Limpeza", "Material Didático"], key=f"lc_ca_{item['id']}")
                 st.session_state.lote_cat[i]['un'] = c4.selectbox("Un", ["Kg", "Unid", "Pct", "Cx", "Saca", "Fardo"], key=f"lc_u_{item['id']}")
                 if len(st.session_state.lote_cat) > 1:
-                    if c5.button("❌", key=f"lc_d_{item['id']}"): st.session_state.lote_cat.pop(i); st.rerun()
-            if st.button("➕ Adicionar Linha"): st.session_state.lote_cat.append({'id': len(st.session_state.lote_cat)+1, 'cod':'', 'nome':'', 'cat':'Alimentação Seca', 'un':'Kg'}); st.rerun()
+                    if c5.button("❌", key=f"lc_d_{item['id']}"):
+                        st.session_state.lote_cat.pop(i)
+                        st.rerun()
+            if st.button("➕ Adicionar Linha"):
+                st.session_state.lote_cat.append({'id': len(st.session_state.lote_cat)+1, 'cod':'', 'nome':'', 'cat':'Alimentação Seca', 'un':'Kg'})
+                st.rerun()
             if st.button("✅ SALVAR LOTE", type="primary"):
                 novos = [[it['cod'], it['nome'], it['cat'], it['un']] for it in st.session_state.lote_cat if it['cod'] and it['nome']]
                 if novos:
                     salvar_dados(pd.concat([df_cat, pd.DataFrame(novos, columns=['ID_Produto', 'Nome_Produto', 'Categoria', 'Unidade_Medida'])]), "db_catalogo", modo='overwrite')
-                    st.success("Lote salvo!"); st.session_state.lote_cat = [{'id': 0, 'cod':'', 'nome':'', 'cat':'Alimentação Seca', 'un':'Kg'}]; st.rerun()
-                else: st.error("Preencha Códigos e Nomes.")
+                    st.success("Lote salvo!")
+                    st.session_state.lote_cat = [{'id': 0, 'cod':'', 'nome':'', 'cat':'Alimentação Seca', 'un':'Kg'}]
+                    st.rerun()
+                else:
+                    st.error("Preencha Códigos e Nomes.")
 
     # --- 10. ADMIN: AUDITORIA ---
     elif menu == "🕵️ Auditoria do Sistema":
@@ -652,12 +737,17 @@ def renderizar_semed():
                 f_doc = st.text_input("Por Nº da Nota")
 
             df_l_view = df_logs.copy()
-            if len(f_data) == 2: df_l_view = df_l_view[(df_l_view['DT'].dt.date >= f_data[0]) & (df_l_view['DT'].dt.date <= f_data[1])]
-            if f_user: df_l_view = df_l_view[df_l_view['Usuario'].isin(f_user)]
-            if f_acao: df_l_view = df_l_view[df_l_view['Acao'].isin(f_acao)]
-            if f_doc: df_l_view = df_l_view[df_l_view['Documento'].astype(str).str.contains(f_doc, case=False, na=False)]
+            if len(f_data) == 2:
+                df_l_view = df_l_view[(df_l_view['DT'].dt.date >= f_data[0]) & (df_l_view['DT'].dt.date <= f_data[1])]
+            if f_user:
+                df_l_view = df_l_view[df_l_view['Usuario'].isin(f_user)]
+            if f_acao:
+                df_l_view = df_l_view[df_l_view['Acao'].isin(f_acao)]
+            if f_doc:
+                df_l_view = df_l_view[df_l_view['Documento'].astype(str).str.contains(f_doc, case=False, na=False)]
 
             st.write(f"**Logs encontrados:** {len(df_l_view)}")
             st.dataframe(df_l_view.drop(columns=['DT']).sort_values('Data_Hora', ascending=False), use_container_width=True, hide_index=True)
             st.download_button("📥 Exportar Resultados", df_l_view.drop(columns=['DT']).to_csv(index=False).encode('utf-8-sig'), "Auditoria_Filtrada_SEMED.csv")
-        else: st.info("Sem logs registrados no sistema.")
+        else:
+            st.info("Sem logs registrados no sistema.")

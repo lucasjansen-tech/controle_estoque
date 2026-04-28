@@ -3,57 +3,65 @@ from views.escola_view import renderizar_escola
 from views.semed_view import renderizar_semed
 
 def main():
-    st.set_page_config(page_title="Gestão de Estoque - SEMED Raposa", page_icon="📦", layout="wide")
+    st.set_page_config(page_title="Sistema de Estoque - SEMED Raposa", page_icon="📦", layout="wide")
 
-    # Verifica se o usuário já está logado na sessão
+    # 1. VERIFICAÇÃO DE LOGIN
     if 'usuario_dados' not in st.session_state or not st.session_state['usuario_dados']:
+        st.markdown("<h2 style='text-align: center; color: #004a99;'>Acesso ao Sistema SEMED</h2>", unsafe_allow_html=True)
         
-        # ==========================================================
-        # COLOQUE A SUA LÓGICA DE TELA DE LOGIN AQUI
-        # (Os campos de st.text_input para e-mail e senha, e a 
-        #  consulta ao db_usuarios para validar o acesso).
-        # Após validar, não se esqueça de salvar os dados na sessão:
-        # st.session_state['usuario_dados'] = {'Email': email_digitado, 'Perfil': perfil_banco, 'ID_Escola': id_escola_banco}
-        # ==========================================================
-        
-        st.info("Por favor, faça o login para acessar o sistema.")
+        with st.form("form_login"):
+            email_digitado = st.text_input("E-mail")
+            senha_digitada = st.text_input("Senha", type="password")
+            btn_login = st.form_submit_button("Entrar", type="primary")
+
+        if btn_login:
+            if email_digitado and senha_digitada:
+                from modules.database import carregar_dados
+                df_usuarios = carregar_dados("db_usuarios")
+                
+                if not df_usuarios.empty:
+                    usuario_encontrado = df_usuarios[(df_usuarios['Email'] == email_digitado) & (df_usuarios['Senha_Hash'] == senha_digitada)]
+                    
+                    if not usuario_encontrado.empty:
+                        dados = usuario_encontrado.iloc[0]
+                        st.session_state['usuario_dados'] = {
+                            'email': dados['Email'],
+                            'perfil': dados['Perfil'],
+                            'id_escola': dados.get('ID_Escola', '')
+                        }
+                        st.success("Login realizado!")
+                        st.rerun()
+                    else:
+                        st.error("E-mail ou senha incorretos.")
+                else:
+                    st.warning("Base de usuários não encontrada.")
+            else:
+                st.warning("Preencha todos os campos.")
         return
 
-    # --- O ROTEADOR CORRIGIDO E BLINDADO ---
+    # 2. ROTEADOR DE TELAS
     user_data = st.session_state['usuario_dados']
-    email_logado = str(user_data.get('email', user_data.get('Email', ''))).strip()
-    
-    # Pega o perfil ignorando se veio maiúsculo ou minúsculo, e remove espaços
-    perfil_bruto = user_data.get('perfil', user_data.get('Perfil', ''))
-    perfil_usuario = str(perfil_bruto).strip().upper()
+    email_logado = str(user_data.get('email', '')).strip()
+    perfil_usuario = str(user_data.get('perfil', '')).strip().upper()
 
-    # Validação de Segurança Extra: Verifica se o e-mail logado é o Admin do st.secrets
-    eh_admin_master = False
+    # Detecção automática de Admin Master via Secrets
     try:
         for k, v in st.secrets.items():
             if isinstance(v, str) and v == email_logado:
-                eh_admin_master = True
+                perfil_usuario = 'ADMIN'
             elif isinstance(v, dict):
                 for sub_v in v.values():
                     if isinstance(sub_v, str) and sub_v == email_logado:
-                        eh_admin_master = True
-    except Exception:
-        pass
+                        perfil_usuario = 'ADMIN'
+    except Exception: pass
 
-    # Força a elevação se for o dono do sistema
-    if eh_admin_master:
-        perfil_usuario = 'ADMIN'
-
-    # Direcionamento das Telas (Routing)
     if perfil_usuario == 'ESCOLA':
         renderizar_escola()
-        
     elif perfil_usuario in ['SEMED', 'COORDENADOR', 'ADMIN', 'ADMINISTRADOR']:
         renderizar_semed()
-        
     else:
-        st.error(f"O perfil de acesso '{perfil_usuario}' não é válido no sistema.")
-        if st.button("Sair e Tentar Novamente"):
+        st.error(f"Perfil '{perfil_usuario}' não autorizado.")
+        if st.sidebar.button("Sair"):
             st.session_state.clear()
             st.rerun()
 

@@ -42,9 +42,9 @@ def renderizar_escola():
     """, unsafe_allow_html=True)
     st.write("")
 
-    # --- MENU LATERAL ---
+    # --- MENU LATERAL (NOMECLATURA ATUALIZADA) ---
     menu = st.sidebar.radio("Navegação Principal", [
-        "🏠 Estoque Atual", 
+        "🏠 Raio-X da Escola", 
         "📦 Receber Materiais", 
         "✏️ Corrigir/Adicionar em Nota",
         "🍳 Registrar Uso (Consumo)",
@@ -65,9 +65,9 @@ def renderizar_escola():
         st.cache_data.clear()
         st.rerun()
 
-    # --- 1. ESTOQUE ATUAL ---
-    if menu == "🏠 Estoque Atual":
-        st.subheader("📋 Saldo em Prateleira")
+    # --- 1. RAIO-X DA ESCOLA ---
+    if menu == "🏠 Raio-X da Escola":
+        st.subheader(f"📋 Saldo em Prateleira - {nome_escola}")
         saldo_df = calcular_estoque_atual(id_escola)
         if not saldo_df.empty:
             df_f = pd.merge(saldo_df, df_cat, on='ID_Produto', how='left')
@@ -79,7 +79,7 @@ def renderizar_escola():
                     st.markdown(f"### {row['Saldo']}")
                     st.caption(f"{row['Unidade_Medida']}")
                     st.markdown(f"**{row['Nome_Produto']}**")
-        else: st.info("Estoque vazio.")
+        else: st.info("Estoque vazio ou não registrado.")
 
     # --- 2. RECEBER MATERIAIS ---
     elif menu == "📦 Receber Materiais":
@@ -128,6 +128,8 @@ def renderizar_escola():
                     st.success("Recebimento Salvo!")
                     st.session_state.lista_itens = [{'id': 0, 'prod': None, 'qtd': 0.0, 'obs': ""}] # Limpa pós-salvamento
                     st.rerun()
+            else:
+                st.error("O Nº da Nota / Documento é obrigatório.")
 
     # --- 3. CORRIGIR/ADICIONAR EM NOTA ---
     elif menu == "✏️ Corrigir/Adicionar em Nota":
@@ -204,7 +206,6 @@ def renderizar_escola():
                         estoque_invalido = False
                         mensagens_erro = []
 
-                        # 1. Verifica se a exclusão total de uma ENTRADA vai negativar a prateleira
                         for mid in st.session_state.ids_excluir:
                             it_del = itens[itens['ID_Movimentacao'] == mid]
                             if not it_del.empty and it_del.iloc[0]['Tipo_Fluxo'] == 'ENTRADA':
@@ -214,13 +215,12 @@ def renderizar_escola():
                                     estoque_invalido = True
                                     mensagens_erro.append(f"Excluir a entrada de '{it_del.iloc[0]['Nome_Produto']}' deixará o estoque negativo.")
 
-                        # 2. Verifica se a redução da quantidade de uma ENTRADA vai negativar a prateleira
                         for l_up in novos_v:
                             it_orig = itens[itens['ID_Movimentacao'] == l_up['ID_Movimentacao']]
                             if not it_orig.empty and it_orig.iloc[0]['Tipo_Fluxo'] == 'ENTRADA':
                                 qtd_antiga = float(it_orig.iloc[0]['Quantidade'])
                                 qtd_nova = float(l_up['Quantidade'])
-                                if qtd_nova < qtd_antiga: # Apenas se reduziu a entrada
+                                if qtd_nova < qtd_antiga:
                                     diferenca = qtd_antiga - qtd_nova
                                     prod_id = l_up['ID_Produto']
                                     if dict_saldos.get(prod_id, 0) < diferenca:
@@ -232,7 +232,6 @@ def renderizar_escola():
                                 st.error(f"🚫 Ação Bloqueada: {erro}")
                             st.warning("Verifique se este produto já não foi consumido ou distribuído.")
                         else:
-                            # Se passou pela segurança matemática, prossegue com o salvamento
                             df_full = carregar_dados("db_movimentacoes")
                             ids_nota = [str(x) for x in itens['ID_Movimentacao'].tolist()]
                             
@@ -273,7 +272,7 @@ def renderizar_escola():
                                     columns=['ID_Movimentacao','Data_Hora','ID_Escola','Tipo_Fluxo','Origem','Destino','ID_Produto','Quantidade','Unidade_Medida','Observacao','ID_Usuario','Documento_Ref'])
                 salvar_dados(df_s, "db_movimentacoes", modo='append'); st.success("Saída Registrada!"); st.rerun()
 
-    # --- 5. RELATÓRIOS OFICIAIS (FILTROS E PDF BLINDADO) ---
+    # --- 5. RELATÓRIOS OFICIAIS (NOVA NOMENCLATURA E TÍTULO) ---
     elif menu == "📜 Relatórios Oficiais":
         st.subheader("📜 Histórico Consolidado e Filtrado")
         df_m = carregar_dados("db_movimentacoes")
@@ -282,6 +281,7 @@ def renderizar_escola():
             df_m = pd.merge(df_m, df_cat[['ID_Produto', 'Nome_Produto']], on='ID_Produto', how='left')
             df_m['DT_OBJ'] = pd.to_datetime(df_m['Data_Hora'], dayfirst=True, errors='coerce')
             
+            # --- FILTROS DE BUSCA ---
             with st.container(border=True):
                 st.markdown("**🔍 Filtros do Relatório**")
                 c1, c2 = st.columns(2)
@@ -292,6 +292,10 @@ def renderizar_escola():
                     df_m = df_m[(df_m['DT_OBJ'].dt.date >= f_data[0]) & (df_m['DT_OBJ'].dt.date <= f_data[1])]
                 if f_tipo_rel:
                     df_m = df_m[df_m['Tipo_Fluxo'].isin(f_tipo_rel)]
+
+            # Formatação do Período para o Nome do Arquivo
+            str_periodo = f"{f_data[0].strftime('%d-%m-%Y')}_a_{f_data[1].strftime('%d-%m-%Y')}" if len(f_data) == 2 else "Todo_o_Periodo"
+            nome_arquivo_base = f"Relatorio_{limpar_texto_pdf(nome_escola).replace(' ', '_')}_{str_periodo}"
 
             df_m['Lote'] = df_m['ID_Movimentacao'].astype(str).str.split('-').str[1]
             grupos = df_m.sort_values('DT_OBJ', ascending=False).groupby(['Lote', 'Documento_Ref', 'Data_Hora', 'ID_Usuario'], sort=False)
@@ -309,15 +313,16 @@ def renderizar_escola():
             c_d1, c_d2 = st.columns(2)
             
             csv = df_m.drop(columns=['DT_OBJ', 'Lote', 'Nome_Produto'], errors='ignore').to_csv(index=False).encode('utf-8-sig')
-            c_d1.download_button("📊 Baixar Excel Detalhado", csv, f"Relatorio_{id_escola}.csv", use_container_width=True)
+            c_d1.download_button("📊 Baixar Excel", csv, f"{nome_arquivo_base}.csv", use_container_width=True)
             
+            # --- GERAÇÃO DO PDF OFICIAL ---
             if FPDF:
                 pdf = FPDF()
                 pdf.add_page()
                 
                 try:
                     pdf.image("Banner.png", x=10, y=10, w=190)
-                    pdf.set_y(50)
+                    pdf.set_y(50) 
                 except Exception:
                     pdf.set_y(10)
 
@@ -325,9 +330,12 @@ def renderizar_escola():
                 pdf.cell(190, 8, "PREFEITURA MUNICIPAL DE RAPOSA", ln=True, align='C')
                 pdf.cell(190, 8, "SECRETARIA MUNICIPAL DE EDUCACAO - SEMED", ln=True, align='C')
                 
-                pdf.set_font("Arial", '', 11)
-                pdf.cell(190, 7, limpar_texto_pdf(f"Controle da Unidade: {nome_escola}"), ln=True, align='C')
-                pdf.ln(8)
+                pdf.set_font("Arial", 'B', 12)
+                pdf.cell(190, 7, limpar_texto_pdf(f"Unidade Escolar: {nome_escola}"), ln=True, align='C')
+                
+                pdf.set_font("Arial", '', 10)
+                pdf.cell(190, 6, limpar_texto_pdf(f"Período: {str_periodo.replace('_', ' ')}"), ln=True, align='C')
+                pdf.ln(6)
                 
                 for (lote, doc, data, resp), group in grupos:
                     pdf.set_font("Arial", 'B', 9); pdf.set_fill_color(240, 240, 240)
@@ -349,6 +357,6 @@ def renderizar_escola():
                     pdf.ln(2)
                 
                 pdf_bytes = pdf.output(dest='S').encode('latin-1')
-                c_d2.download_button("📄 Baixar PDF Oficial", pdf_bytes, f"Relatorio_{id_escola}.pdf", "application/pdf", use_container_width=True)
+                c_d2.download_button("📄 Baixar PDF Oficial", pdf_bytes, f"{nome_arquivo_base}.pdf", "application/pdf", use_container_width=True)
             else:
                 c_d2.warning("Instale 'fpdf' para gerar o PDF.")

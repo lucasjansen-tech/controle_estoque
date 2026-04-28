@@ -25,11 +25,19 @@ def limpar_texto_pdf(texto):
 
 def renderizar_escola():
     user_data = st.session_state['usuario_dados']
-    id_escola = user_data['id_escola']
+    
+    # --- VACINA DE LEITURA DO ID ---
+    # Tenta pegar a chave de todas as formas possíveis (maiúscula ou minúscula)
+    id_escola = user_data.get('id_escola', user_data.get('ID_Escola', ''))
+    
     df_esc_ref = carregar_dados("db_escolas")
     df_cat = carregar_dados("db_catalogo")
     
-    nome_escola = next((r['Nome_Escola'] for _, r in df_esc_ref.iterrows() if r['ID_Escola'] == id_escola), "Unidade Escolar")
+    # Proteção caso a base de escolas esteja vazia
+    if not df_esc_ref.empty and 'ID_Escola' in df_esc_ref.columns:
+        nome_escola = next((r['Nome_Escola'] for _, r in df_esc_ref.iterrows() if r['ID_Escola'] == id_escola), "Unidade Escolar")
+    else:
+        nome_escola = "Unidade Escolar"
 
     # --- CABEÇALHO INSTITUCIONAL SIMÉTRICO ---
     st.markdown(f"""
@@ -55,7 +63,6 @@ def renderizar_escola():
     if 'menu_anterior' not in st.session_state:
         st.session_state.menu_anterior = menu
     if st.session_state.menu_anterior != menu:
-        # Se trocou de aba, limpa as memórias de preenchimento para não confundir usuários
         if 'lista_itens' in st.session_state: st.session_state.lista_itens = [{'id': 0, 'prod': None, 'qtd': 0.0, 'obs': ""}]
         if 'ids_excluir' in st.session_state: st.session_state.ids_excluir = []
         st.session_state.menu_anterior = menu
@@ -123,10 +130,10 @@ def renderizar_escola():
                 for idx, it in enumerate(st.session_state.lista_itens):
                     if it['prod'] and it['qtd'] > 0:
                         cat = df_cat[df_cat['Nome_Produto'] == it['prod']].iloc[0]
-                        lista_s.append([f"MOV-{t_id}-{idx}", data_r.strftime('%d/%m/%Y'), id_escola, "ENTRADA", origem, nome_escola, cat['ID_Produto'], it['qtd'], cat['Unidade_Medida'], it['obs'], user_data['email'], doc_ref])
+                        lista_s.append([f"MOV-{t_id}-{idx}", data_r.strftime('%d/%m/%Y'), id_escola, "ENTRADA", origem, nome_escola, cat['ID_Produto'], it['qtd'], cat['Unidade_Medida'], it['obs'], user_data.get('email', user_data.get('Email', '')), doc_ref])
                 if salvar_dados(pd.DataFrame(lista_s, columns=['ID_Movimentacao','Data_Hora','ID_Escola','Tipo_Fluxo','Origem','Destino','ID_Produto','Quantidade','Unidade_Medida','Observacao','ID_Usuario','Documento_Ref']), "db_movimentacoes", modo='append'):
                     st.success("Recebimento Salvo!")
-                    st.session_state.lista_itens = [{'id': 0, 'prod': None, 'qtd': 0.0, 'obs': ""}] # Limpa pós-salvamento
+                    st.session_state.lista_itens = [{'id': 0, 'prod': None, 'qtd': 0.0, 'obs': ""}] 
                     st.rerun()
             else:
                 st.error("O Nº da Nota / Documento é obrigatório.")
@@ -193,10 +200,11 @@ def renderizar_escola():
                         if st.button("Confirmar Inclusão na Nota"):
                             if n_p and n_q > 0:
                                 cat_n = df_cat[df_cat['Nome_Produto'] == n_p].iloc[0]
-                                nova_l = pd.DataFrame([[f"MOV-{lote_id}-ADD{datetime.now().strftime('%S')}", itens.iloc[0]['Data_Hora'], id_escola, "ENTRADA", itens.iloc[0]['Origem'], nome_escola, cat_n['ID_Produto'], n_q, cat_n['Unidade_Medida'], "", user_data['email'], itens.iloc[0]['Documento_Ref']]], 
+                                email_usr = user_data.get('email', user_data.get('Email', ''))
+                                nova_l = pd.DataFrame([[f"MOV-{lote_id}-ADD{datetime.now().strftime('%S')}", itens.iloc[0]['Data_Hora'], id_escola, "ENTRADA", itens.iloc[0]['Origem'], nome_escola, cat_n['ID_Produto'], n_q, cat_n['Unidade_Medida'], "", email_usr, itens.iloc[0]['Documento_Ref']]], 
                                                      columns=['ID_Movimentacao','Data_Hora','ID_Escola','Tipo_Fluxo','Origem','Destino','ID_Produto','Quantidade','Unidade_Medida','Observacao','ID_Usuario','Documento_Ref'])
                                 salvar_dados(pd.concat([carregar_dados("db_movimentacoes"), nova_l]), "db_movimentacoes", modo='overwrite')
-                                registrar_log(user_data['email'], "ADIÇÃO", itens.iloc[0]['Documento_Ref'], n_p, n_q)
+                                registrar_log(email_usr, "ADIÇÃO", itens.iloc[0]['Documento_Ref'], n_p, n_q)
                                 st.success("Adicionado!"); st.rerun()
 
                     if st.button("💾 SALVAR ALTERAÇÕES NESTA NOTA", type="primary", use_container_width=True):
@@ -234,10 +242,11 @@ def renderizar_escola():
                         else:
                             df_full = carregar_dados("db_movimentacoes")
                             ids_nota = [str(x) for x in itens['ID_Movimentacao'].tolist()]
+                            email_usr = user_data.get('email', user_data.get('Email', ''))
                             
                             for mid in st.session_state.ids_excluir:
                                 it_log = itens[itens['ID_Movimentacao'] == mid]
-                                if not it_log.empty: registrar_log(user_data['email'], "EXCLUSÃO", it_log.iloc[0]['Documento_Ref'], it_log.iloc[0]['Nome_Produto'], it_log.iloc[0]['Quantidade'])
+                                if not it_log.empty: registrar_log(email_usr, "EXCLUSÃO", it_log.iloc[0]['Documento_Ref'], it_log.iloc[0]['Nome_Produto'], it_log.iloc[0]['Quantidade'])
 
                             df_r = df_full[~df_full['ID_Movimentacao'].astype(str).isin(ids_nota)]
                             df_n = pd.DataFrame(novos_v).drop(columns=['Nome_Produto', 'Label', 'ID_Lote', 'DT_OBJ'], errors='ignore')
@@ -268,11 +277,12 @@ def renderizar_escola():
         
         if st.button("Confirmar Baixa", type="primary", use_container_width=True):
             if q_u > 0 and q_u <= s_item:
-                df_s = pd.DataFrame([[f"SAI-{datetime.now().strftime('%H%M%S')}", d_u.strftime('%d/%m/%Y'), id_escola, "SAÍDA", nome_escola, "CONSUMO", cat_u['ID_Produto'], q_u, cat_u['Unidade_Medida'], o_u, user_data['email'], "USO DIÁRIO"]], 
+                email_usr = user_data.get('email', user_data.get('Email', ''))
+                df_s = pd.DataFrame([[f"SAI-{datetime.now().strftime('%H%M%S')}", d_u.strftime('%d/%m/%Y'), id_escola, "SAÍDA", nome_escola, "CONSUMO", cat_u['ID_Produto'], q_u, cat_u['Unidade_Medida'], o_u, email_usr, "USO DIÁRIO"]], 
                                     columns=['ID_Movimentacao','Data_Hora','ID_Escola','Tipo_Fluxo','Origem','Destino','ID_Produto','Quantidade','Unidade_Medida','Observacao','ID_Usuario','Documento_Ref'])
                 salvar_dados(df_s, "db_movimentacoes", modo='append'); st.success("Saída Registrada!"); st.rerun()
 
-    # --- 5. RELATÓRIOS OFICIAIS (NOVA NOMENCLATURA E TÍTULO) ---
+    # --- 5. RELATÓRIOS OFICIAIS ---
     elif menu == "📜 Relatórios Oficiais":
         st.subheader("📜 Histórico Consolidado e Filtrado")
         df_m = carregar_dados("db_movimentacoes")
@@ -281,7 +291,6 @@ def renderizar_escola():
             df_m = pd.merge(df_m, df_cat[['ID_Produto', 'Nome_Produto']], on='ID_Produto', how='left')
             df_m['DT_OBJ'] = pd.to_datetime(df_m['Data_Hora'], dayfirst=True, errors='coerce')
             
-            # --- FILTROS DE BUSCA ---
             with st.container(border=True):
                 st.markdown("**🔍 Filtros do Relatório**")
                 c1, c2 = st.columns(2)
@@ -293,7 +302,6 @@ def renderizar_escola():
                 if f_tipo_rel:
                     df_m = df_m[df_m['Tipo_Fluxo'].isin(f_tipo_rel)]
 
-            # Formatação do Período para o Nome do Arquivo
             str_periodo = f"{f_data[0].strftime('%d-%m-%Y')}_a_{f_data[1].strftime('%d-%m-%Y')}" if len(f_data) == 2 else "Todo_o_Periodo"
             nome_arquivo_base = f"Relatorio_{limpar_texto_pdf(nome_escola).replace(' ', '_')}_{str_periodo}"
 
@@ -313,9 +321,8 @@ def renderizar_escola():
             c_d1, c_d2 = st.columns(2)
             
             csv = df_m.drop(columns=['DT_OBJ', 'Lote', 'Nome_Produto'], errors='ignore').to_csv(index=False).encode('utf-8-sig')
-            c_d1.download_button("📊 Baixar Excel", csv, f"{nome_arquivo_base}.csv", use_container_width=True)
+            c_d1.download_button("📊 Baixar Excel Detalhado", csv, f"{nome_arquivo_base}.csv", use_container_width=True)
             
-            # --- GERAÇÃO DO PDF OFICIAL ---
             if FPDF:
                 pdf = FPDF()
                 pdf.add_page()

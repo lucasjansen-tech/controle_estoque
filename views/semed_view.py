@@ -525,7 +525,10 @@ def renderizar_semed():
     elif menu == "👥 Gestão de Usuários":
         st.subheader("👥 Controle de Acessos e Perfis")
         
-        # 1. CRIANDO A "MÁSCARA" DE NOMES: Dicionário que traduz o ID para o Nome da Escola
+        # PREVENÇÃO: Se a coluna Nome não existir na planilha, cria ela como backup
+        if not df_usuarios.empty and 'Nome' not in df_usuarios.columns:
+            df_usuarios['Nome'] = df_usuarios['Email']
+            
         dict_nomes_escolas = {"NENHUMA (Acesso Global)": "NENHUMA (Acesso Global)"}
         if not df_esc.empty:
             for _, row in df_esc.iterrows():
@@ -534,7 +537,7 @@ def renderizar_semed():
         with st.container(border=True):
             st.markdown("**🔍 Filtros Avançados de Usuário**")
             c_f1, c_f2, c_f3 = st.columns(3)
-            f_u_nome = c_f1.text_input("Buscar por E-mail")
+            f_u_nome = c_f1.text_input("Buscar por Nome ou E-mail")
             f_u_perfil = c_f2.selectbox("Filtrar Perfil", ["Todos", "ESCOLA", "COORDENADOR", "ADMIN"])
             
             escolas_disp = ["Todas"] + df_esc['Nome_Escola'].tolist()
@@ -542,7 +545,11 @@ def renderizar_semed():
         
         df_u_view = df_usuarios.copy()
         
-        if f_u_nome: df_u_view = df_u_view[df_u_view['Email'].str.contains(f_u_nome, case=False, na=False)]
+        if f_u_nome: 
+            mask_email = df_u_view['Email'].str.contains(f_u_nome, case=False, na=False)
+            mask_nome = df_u_view.get('Nome', pd.Series("")).str.contains(f_u_nome, case=False, na=False)
+            df_u_view = df_u_view[mask_email | mask_nome]
+            
         if f_u_perfil != "Todos": df_u_view = df_u_view[df_u_view['Perfil'] == f_u_perfil]
         if f_u_esc != "Todas":
             id_esc_f = df_esc[df_esc['Nome_Escola'] == f_u_esc]['ID_Escola'].values[0]
@@ -555,7 +562,10 @@ def renderizar_semed():
         for idx, u_row in df_u_view.iterrows():
             with st.container(border=True):
                 col_u1, col_u2, col_u3, col_u4 = st.columns([2, 1, 2, 1])
-                col_u1.markdown(f"**E-mail:** {u_row['Email']}")
+                
+                # Mostra o Nome em negrito e o e-mail menorzinho embaixo
+                nome_exibicao = u_row.get('Nome', u_row['Email'])
+                col_u1.markdown(f"**{nome_exibicao}**<br><span style='color:gray;font-size:0.8em;'>{u_row['Email']}</span>", unsafe_allow_html=True)
                 col_u2.markdown(f"**Perfil:** `{u_row['Perfil']}`")
                 
                 nome_esc_vinculo = "Acesso Global"
@@ -568,28 +578,26 @@ def renderizar_semed():
                     if col_u4.button("🗑️ Excluir", key=f"del_u_{u_row['ID_Usuario']}"):
                         df_u_novo = df_usuarios[df_usuarios['ID_Usuario'] != u_row['ID_Usuario']]
                         salvar_dados(df_u_novo, "db_usuarios", modo='overwrite')
-                        st.warning(f"Usuário removido!"); st.rerun()
+                        st.warning("Usuário removido!"); st.rerun()
 
-        tab_u_add, tab_u_edit = st.tabs(["➕ Cadastrar Usuário", "✏️ Editar Credenciais (Resetar Senha)"])
-        
-        # A lista continua sendo de IDs para o banco salvar corretamente
+        tab_u_add, tab_u_edit = st.tabs(["➕ Cadastrar Usuário", "✏️ Editar Credenciais"])
         lista_escolas_u = ["NENHUMA (Acesso Global)"] + df_esc['ID_Escola'].tolist()
         perfis_disp = ["ESCOLA", "COORDENADOR", "ADMIN"]
 
         with tab_u_add:
             with st.form("f_new_user"):
                 c1, c2 = st.columns(2)
+                u_nome = c1.text_input("Nome Completo do Responsável")
                 u_email = c1.text_input("E-mail (Login)")
-                u_senha = c1.text_input("Senha", type="password")
+                u_senha = c2.text_input("Senha", type="password")
                 u_perfil = c2.selectbox("Perfil", perfis_disp)
-                
-                # 2. APLICAÇÃO DA MÁSCARA (format_func): Você vê o nome, o Streamlit guarda o ID
-                u_esc = c2.selectbox("Vincular à Escola", lista_escolas_u, format_func=lambda x: dict_nomes_escolas.get(x, str(x)))
+                u_esc = st.selectbox("Vincular à Escola", lista_escolas_u, format_func=lambda x: dict_nomes_escolas.get(x, str(x)))
                 
                 if st.form_submit_button("Salvar Usuário"):
-                    if u_email and u_senha:
-                        novo_u = pd.DataFrame([[f"USR-{datetime.now().strftime('%H%M%S')}", u_email, u_senha, u_perfil, u_esc]], columns=['ID_Usuario', 'Email', 'Senha_Hash', 'Perfil', 'ID_Escola'])
+                    if u_nome and u_email and u_senha:
+                        novo_u = pd.DataFrame([[f"USR-{datetime.now().strftime('%H%M%S')}", u_nome, u_email, u_senha, u_perfil, u_esc]], columns=['ID_Usuario', 'Nome', 'Email', 'Senha_Hash', 'Perfil', 'ID_Escola'])
                         salvar_dados(pd.concat([df_usuarios, novo_u]), "db_usuarios", modo='overwrite'); st.success("Cadastrado!"); st.rerun()
+                    else: st.error("Preencha Nome, E-mail e Senha.")
 
         with tab_u_edit:
             usr_ed = st.selectbox("Selecione o Usuário para Alterar", [None] + df_usuarios['Email'].sort_values().tolist())
@@ -598,21 +606,20 @@ def renderizar_semed():
                 with st.form("f_edit_user"):
                     st.info("Para manter a mesma senha, deixe o campo de Nova Senha vazio.")
                     c1, c2 = st.columns(2)
+                    up_nome = c1.text_input("Alterar Nome", value=dados_usr.get('Nome', dados_usr['Email']))
                     up_email = c1.text_input("Alterar E-mail", value=dados_usr['Email'])
-                    up_senha = c1.text_input("Nova Senha", type="password")
+                    up_senha = c2.text_input("Nova Senha", type="password")
                     
                     idx_p = perfis_disp.index(dados_usr['Perfil']) if dados_usr['Perfil'] in perfis_disp else 0
                     up_perfil = c2.selectbox("Alterar Perfil", perfis_disp, index=idx_p)
                     
                     idx_e = lista_escolas_u.index(dados_usr['ID_Escola']) if dados_usr['ID_Escola'] in lista_escolas_u else 0
+                    up_esc = st.selectbox("Alterar Vínculo Escolar", lista_escolas_u, index=idx_e, format_func=lambda x: dict_nomes_escolas.get(x, str(x)))
                     
-                    # 3. APLICAÇÃO DA MÁSCARA NA EDIÇÃO TAMBÉM
-                    up_esc = c2.selectbox("Alterar Vínculo Escolar", lista_escolas_u, index=idx_e, format_func=lambda x: dict_nomes_escolas.get(x, str(x)))
-                    
-                    if st.form_submit_button("Atualizar Credenciais"):
+                    if st.form_submit_button("Atualizar Usuário"):
                         senha_final = up_senha if up_senha else dados_usr['Senha_Hash']
                         df_u_resto = df_usuarios[df_usuarios['ID_Usuario'] != dados_usr['ID_Usuario']]
-                        df_u_up = pd.DataFrame([[dados_usr['ID_Usuario'], up_email, senha_final, up_perfil, up_esc]], columns=['ID_Usuario', 'Email', 'Senha_Hash', 'Perfil', 'ID_Escola'])
+                        df_u_up = pd.DataFrame([[dados_usr['ID_Usuario'], up_nome, up_email, senha_final, up_perfil, up_esc]], columns=['ID_Usuario', 'Nome', 'Email', 'Senha_Hash', 'Perfil', 'ID_Escola'])
                         salvar_dados(pd.concat([df_u_resto, df_u_up]), "db_usuarios", modo='overwrite'); st.success("Usuário atualizado!"); st.rerun()
 
     # --- 9. ADMIN: GERENCIAR CATÁLOGO ---

@@ -27,7 +27,7 @@ def renderizar_semed():
     perfil_bruto = user_data.get('perfil', user_data.get('Perfil', ''))
     perfil_usuario = str(perfil_bruto).strip().upper()
     
-    # --- A GRANDE CORREÇÃO: DETECÇÃO DO ADMIN MASTER (st.secrets) ---
+    # --- DETECÇÃO DO ADMIN MASTER (st.secrets) ---
     eh_admin_master = False
     try:
         for k, v in st.secrets.items():
@@ -359,7 +359,7 @@ def renderizar_semed():
                                     columns=['ID_Movimentacao','Data_Hora','ID_Escola','Tipo_Fluxo','Origem','Destino','ID_Produto','Quantidade','Unidade_Medida','Observacao','ID_Usuario','Documento_Ref'])
                 salvar_dados(df_s, "db_movimentacoes", modo='append'); st.success("Baixa Executada!"); st.rerun()
 
-    # --- 6. RELATÓRIOS GLOBAIS ---
+    # --- 6. RELATÓRIOS GLOBAIS (ORG. POR ESCOLA E NOME DINÂMICO) ---
     elif menu == "📜 Relatórios Globais":
         st.subheader("📜 Extrator Consolidado da Rede")
         if not df_mov.empty and 'ID_Escola' in df_mov.columns:
@@ -371,32 +371,54 @@ def renderizar_semed():
                 st.markdown("**🔍 Filtros do Relatório**")
                 c1, c2, c3 = st.columns(3)
                 f_data = c1.date_input("Período", [datetime.now() - timedelta(days=30), datetime.now()], format="DD/MM/YYYY")
-                f_esc = c2.multiselect("Unidades (Vazio = Todas)", df_esc['Nome_Escola'].tolist())
+                f_esc = c2.multiselect("Unidades (Vazio = Todas)", df_esc['Nome_Escola'].sort_values().tolist())
                 f_tipo = c3.multiselect("Fluxo", ["ENTRADA", "SAÍDA", "TRANSFERÊNCIA"])
 
+            # 1. Aplicação de Filtros
             if len(f_data) == 2: df_rel = df_rel[(df_rel['DT_OBJ'].dt.date >= f_data[0]) & (df_rel['DT_OBJ'].dt.date <= f_data[1])]
             if f_tipo: df_rel = df_rel[df_rel['Tipo_Fluxo'].isin(f_tipo)]
             if f_esc: 
                 ids_f = df_esc[df_esc['Nome_Escola'].isin(f_esc)]['ID_Escola'].tolist()
                 df_rel = df_rel[df_rel['ID_Escola'].isin(ids_f)]
 
-            df_rel['Lote'] = df_rel['ID_Movimentacao'].astype(str).str.split('-').str[1].fillna("0")
-            grupos = df_rel.sort_values('DT_OBJ', ascending=False).groupby(['Lote', 'Documento_Ref', 'Data_Hora', 'Destino', 'ID_Usuario'], sort=False)
-            
-            st.write(f"**Notas Encontradas:** {len(grupos)}")
-            for (lote, doc, data, destino, resp), group in grupos:
-                with st.container(border=True):
-                    st.markdown(f"🏫 **{destino}** | 📄 `{doc}` | 🗓️ {data} | 👤 `{resp}`")
-                    cols_show = ['Nome_Produto', 'Quantidade']
-                    if 'Unidade_Medida' in group.columns: cols_show.append('Unidade_Medida')
-                    if 'Observacao' in group.columns: cols_show.append('Observacao')
-                    cols_show.append('Tipo_Fluxo')
-                    st.dataframe(group[cols_show], use_container_width=True, hide_index=True)
+            # 2. Lógica de Nomenclatura Dinâmica para os Arquivos
+            str_periodo = f"{f_data[0].strftime('%d-%m-%Y')}_a_{f_data[1].strftime('%d-%m-%Y')}" if len(f_data) == 2 else "Todo_o_Periodo"
+            if f_esc and len(f_esc) == 1:
+                nome_arquivo_base = f"{limpar_texto_pdf(f_esc[0]).replace(' ', '_')}_{str_periodo}"
+            else:
+                nome_arquivo_base = f"Relatorio_SEMED_{str_periodo}"
 
+            df_rel['Lote'] = df_rel['ID_Movimentacao'].astype(str).str.split('-').str[1].fillna("0")
+            
+            # 3. Ordenação Alfabética por Escola (Destino) e Cronológica
+            df_rel = df_rel.sort_values(by=['Destino', 'DT_OBJ'], ascending=[True, False])
+            
+            # Agrupamento Visual na Tela
+            escolas_presentes = df_rel['Destino'].unique()
+            st.write(f"**Escolas encontradas neste filtro:** {len(escolas_presentes)}")
+            st.divider()
+
+            for escola in escolas_presentes:
+                st.markdown(f"<h3 style='color:#004a99; margin-top:10px;'>🏫 {escola}</h3>", unsafe_allow_html=True)
+                
+                df_escola = df_rel[df_rel['Destino'] == escola]
+                grupos = df_escola.groupby(['Lote', 'Documento_Ref', 'Data_Hora', 'ID_Usuario'], sort=False)
+                
+                for (lote, doc, data, resp), group in grupos:
+                    with st.container(border=True):
+                        st.markdown(f"📄 **Nota/Documento:** `{doc}` | 🗓️ **Data:** {data} | 👤 **Responsável:** `{resp}`")
+                        cols_show = ['Nome_Produto', 'Quantidade']
+                        if 'Unidade_Medida' in group.columns: cols_show.append('Unidade_Medida')
+                        if 'Observacao' in group.columns: cols_show.append('Observacao')
+                        cols_show.append('Tipo_Fluxo')
+                        st.dataframe(group[cols_show], use_container_width=True, hide_index=True)
+
+            # Botões de Download
             c_d1, c_d2 = st.columns(2)
             csv_f = df_rel.drop(columns=['DT_OBJ', 'Lote', 'Nome_Produto'], errors='ignore').to_csv(index=False).encode('utf-8-sig')
-            c_d1.download_button("📊 Baixar Excel", csv_f, "Relatorio_SEMED.csv", use_container_width=True)
+            c_d1.download_button("📊 Baixar Excel", csv_f, f"{nome_arquivo_base}.csv", use_container_width=True)
             
+            # Geração do PDF Alinhada ao Novo Layout
             if FPDF:
                 pdf = FPDF()
                 pdf.add_page()
@@ -410,27 +432,41 @@ def renderizar_semed():
                 pdf.cell(190, 8, "SECRETARIA MUNICIPAL DE EDUCACAO - SEMED", ln=True, align='C')
                 pdf.set_font("Arial", '', 11)
                 
-                texto_escola = limpar_texto_pdf("Relatorio Consolidado da Rede" if not f_esc else f"Relatorio ({len(f_esc)} Unidades)")
+                texto_escola = limpar_texto_pdf("Relatorio Consolidado da Rede" if not f_esc else f"Relatorio: {f_esc[0]}")
                 pdf.cell(190, 7, texto_escola, ln=True, align='C')
                 pdf.ln(8)
                 
-                for (lote, doc, data, destino, resp), group in grupos:
-                    pdf.set_font("Arial", 'B', 9); pdf.set_fill_color(230, 230, 230)
-                    texto_cabecalho = limpar_texto_pdf(f" ESCOLA: {str(destino)[:25]} | NOTA: {doc} | DATA: {data}")
-                    pdf.cell(190, 8, texto_cabecalho, 1, 1, 'L', True)
-                    
-                    pdf.set_font("Arial", 'B', 8); pdf.set_fill_color(255, 255, 255)
-                    pdf.cell(90, 7, " Produto", 1); pdf.cell(20, 7, " Qtd", 1); pdf.cell(20, 7, " Unid", 1); pdf.cell(60, 7, " Obs", 1); pdf.ln()
-                    pdf.set_font("Arial", '', 8)
-                    for _, r in group.iterrows():
-                        nome_p = limpar_texto_pdf(f" {str(r['Nome_Produto'])[:40]}")
-                        qtd_p = limpar_texto_pdf(f" {r['Quantidade']}")
-                        un_p = limpar_texto_pdf(f" {r.get('Unidade_Medida', '')}")
-                        obs_p = limpar_texto_pdf(f" {str(r.get('Observacao', ''))[:30]}")
-                        
-                        pdf.cell(90, 6, nome_p, 1); pdf.cell(20, 6, qtd_p, 1); pdf.cell(20, 6, un_p, 1); pdf.cell(60, 6, obs_p, 1); pdf.ln()
+                for escola in escolas_presentes:
+                    # Cabeçalho da Escola no PDF
+                    pdf.set_font("Arial", 'B', 11)
+                    pdf.set_fill_color(200, 220, 255) # Fundo Azul claro para separar blocos
+                    pdf.cell(190, 8, limpar_texto_pdf(f" UNIDADE: {escola}"), 1, 1, 'C', True)
                     pdf.ln(3)
-                c_d2.download_button("📄 Baixar PDF Oficial", pdf.output(dest='S').encode('latin-1'), "Relatorio_SEMED.pdf", "application/pdf", use_container_width=True)
+                    
+                    df_escola = df_rel[df_rel['Destino'] == escola]
+                    grupos_pdf = df_escola.groupby(['Lote', 'Documento_Ref', 'Data_Hora', 'ID_Usuario'], sort=False)
+                    
+                    for (lote, doc, data, resp), group in grupos_pdf:
+                        pdf.set_font("Arial", 'B', 9)
+                        pdf.set_fill_color(240, 240, 240) # Fundo Cinza para a Nota
+                        texto_cabecalho = limpar_texto_pdf(f" NOTA: {doc} | DATA: {data} | RESP: {resp}")
+                        pdf.cell(190, 8, texto_cabecalho, 1, 1, 'L', True)
+                        
+                        pdf.set_font("Arial", 'B', 8)
+                        pdf.set_fill_color(255, 255, 255)
+                        pdf.cell(90, 7, " Produto", 1); pdf.cell(20, 7, " Qtd", 1); pdf.cell(20, 7, " Unid", 1); pdf.cell(60, 7, " Obs", 1); pdf.ln()
+                        
+                        pdf.set_font("Arial", '', 8)
+                        for _, r in group.iterrows():
+                            nome_p = limpar_texto_pdf(f" {str(r['Nome_Produto'])[:40]}")
+                            qtd_p = limpar_texto_pdf(f" {r['Quantidade']}")
+                            un_p = limpar_texto_pdf(f" {r.get('Unidade_Medida', '')}")
+                            obs_p = limpar_texto_pdf(f" {str(r.get('Observacao', ''))[:30]}")
+                            
+                            pdf.cell(90, 6, nome_p, 1); pdf.cell(20, 6, qtd_p, 1); pdf.cell(20, 6, un_p, 1); pdf.cell(60, 6, obs_p, 1); pdf.ln()
+                        pdf.ln(4) # Espaço extra entre as notas da mesma escola
+                
+                c_d2.download_button("📄 Baixar PDF Oficial", pdf.output(dest='S').encode('latin-1'), f"{nome_arquivo_base}.pdf", "application/pdf", use_container_width=True)
             else:
                 c_d2.warning("Instale 'fpdf' para gerar o PDF.")
 

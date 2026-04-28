@@ -282,10 +282,12 @@ def renderizar_escola():
                                     columns=['ID_Movimentacao','Data_Hora','ID_Escola','Tipo_Fluxo','Origem','Destino','ID_Produto','Quantidade','Unidade_Medida','Observacao','ID_Usuario','Documento_Ref'])
                 salvar_dados(df_s, "db_movimentacoes", modo='append'); st.success("Saída Registrada!"); st.rerun()
 
-    # --- 5. RELATÓRIOS OFICIAIS ---
+# --- 5. RELATÓRIOS OFICIAIS (VERSÃO FINAL BLINDADA) ---
     elif menu == "📜 Relatórios Oficiais":
         st.subheader("📜 Histórico Consolidado e Filtrado")
         df_m = carregar_dados("db_movimentacoes")
+        df_usuarios = carregar_dados("db_usuarios") # Necessário para o tradutor de nomes
+
         if not df_m.empty and 'ID_Escola' in df_m.columns:
             df_m = df_m[df_m['ID_Escola'] == id_escola].copy()
             df_m = pd.merge(df_m, df_cat[['ID_Produto', 'Nome_Produto']], on='ID_Produto', how='left')
@@ -302,68 +304,46 @@ def renderizar_escola():
                 if f_tipo_rel:
                     df_m = df_m[df_m['Tipo_Fluxo'].isin(f_tipo_rel)]
 
-            str_periodo = f"{f_data[0].strftime('%d-%m-%Y')}_a_{f_data[1].strftime('%d-%m-%Y')}" if len(f_data) == 2 else "Todo_o_Periodo"
-            nome_arquivo_base = f"Relatorio_{limpar_texto_pdf(nome_escola).replace(' ', '_')}_{str_periodo}"
+            # 1. Tradutor de E-mail para Nome
+            dict_nomes_usuarios = {}
+            if not df_usuarios.empty and 'Nome' in df_usuarios.columns:
+                dict_nomes_usuarios = df_usuarios.set_index('Email')['Nome'].to_dict()
+            df_m['Responsavel'] = df_m['ID_Usuario'].map(lambda x: dict_nomes_usuarios.get(x, x))
+
+            # 2. Nomenclatura Dinâmica
+            str_periodo = f"{f_data[0].strftime('%d-%m-%Y')}_a_{f_data[1].strftime('%d-%m-%Y')}" if len(f_data) == 2 else "Geral"
+            nome_arq = f"Relatorio_{limpar_texto_pdf(nome_escola).replace(' ', '_')}_{str_periodo}"
 
             df_m['Lote'] = df_m['ID_Movimentacao'].astype(str).str.split('-').str[1]
-            grupos = df_m.sort_values('DT_OBJ', ascending=False).groupby(['Lote', 'Documento_Ref', 'Data_Hora', 'ID_Usuario'], sort=False)
+            grupos = df_m.sort_values('DT_OBJ', ascending=False).groupby(['Lote', 'Documento_Ref', 'Data_Hora', 'Responsavel'], sort=False)
             
             for (lote, doc, data, resp), group in grupos:
                 with st.container(border=True):
                     st.markdown(f"📄 **Nota/Documento:** `{doc}` | 🗓️ **Data:** {data} | 👤 **Responsável:** `{resp}`")
-                    cols_show = ['Nome_Produto', 'Quantidade']
-                    if 'Unidade_Medida' in group.columns: cols_show.append('Unidade_Medida')
-                    if 'Observacao' in group.columns: cols_show.append('Observacao')
-                    cols_show.append('Tipo_Fluxo')
-                    st.dataframe(group[cols_show], use_container_width=True, hide_index=True)
+                    st.dataframe(group[['Nome_Produto', 'Quantidade', 'Unidade_Medida', 'Observacao', 'Tipo_Fluxo']], use_container_width=True, hide_index=True)
 
             st.divider()
             c_d1, c_d2 = st.columns(2)
-            
             csv = df_m.drop(columns=['DT_OBJ', 'Lote', 'Nome_Produto'], errors='ignore').to_csv(index=False).encode('utf-8-sig')
-            c_d1.download_button("📊 Baixar Excel Detalhado", csv, f"{nome_arquivo_base}.csv", use_container_width=True)
+            c_d1.download_button("📊 Baixar Excel", csv, f"{nome_arq}.csv", use_container_width=True)
             
             if FPDF:
                 pdf = FPDF()
                 pdf.add_page()
-                
-                try:
-                    pdf.image("Banner.png", x=10, y=10, w=190)
-                    pdf.set_y(50) 
-                except Exception:
-                    pdf.set_y(10)
-
-                pdf.set_font("Arial", 'B', 14)
-                pdf.cell(190, 8, "PREFEITURA MUNICIPAL DE RAPOSA", ln=True, align='C')
+                try: pdf.image("Banner.png", x=10, y=10, w=190); pdf.set_y(50) 
+                except: pdf.set_y(10)
+                pdf.set_font("Arial", 'B', 14); pdf.cell(190, 8, "PREFEITURA MUNICIPAL DE RAPOSA", ln=True, align='C')
                 pdf.cell(190, 8, "SECRETARIA MUNICIPAL DE EDUCACAO - SEMED", ln=True, align='C')
-                
-                pdf.set_font("Arial", 'B', 12)
-                pdf.cell(190, 7, limpar_texto_pdf(f"Unidade Escolar: {nome_escola}"), ln=True, align='C')
-                
-                pdf.set_font("Arial", '', 10)
-                pdf.cell(190, 6, limpar_texto_pdf(f"Período: {str_periodo.replace('_', ' ')}"), ln=True, align='C')
-                pdf.ln(6)
+                pdf.set_font("Arial", 'B', 12); pdf.cell(190, 7, limpar_texto_pdf(f"Unidade Escolar: {nome_escola}"), ln=True, align='C')
+                pdf.set_font("Arial", '', 10); pdf.cell(190, 6, limpar_texto_pdf(f"Período: {str_periodo.replace('_', ' ')}"), ln=True, align='C'); pdf.ln(6)
                 
                 for (lote, doc, data, resp), group in grupos:
                     pdf.set_font("Arial", 'B', 9); pdf.set_fill_color(240, 240, 240)
-                    texto_cabecalho = limpar_texto_pdf(f" NOTA: {doc} | DATA: {data} | RESP: {resp}")
-                    pdf.cell(190, 8, texto_cabecalho, 1, 1, 'L', True)
-                    
+                    pdf.cell(190, 8, limpar_texto_pdf(f" NOTA: {doc} | DATA: {data} | RESP: {resp}"), 1, 1, 'L', True)
                     pdf.set_font("Arial", '', 8)
                     for _, r in group.iterrows():
-                        nome_p = limpar_texto_pdf(f" {str(r['Nome_Produto'])[:40]}")
-                        qtd_p = limpar_texto_pdf(f" {r['Quantidade']}")
-                        un_p = limpar_texto_pdf(f" {r.get('Unidade_Medida', '')}")
-                        obs_p = limpar_texto_pdf(f" {str(r.get('Observacao', ''))[:30]}")
-                        
-                        pdf.cell(90, 6, nome_p, 1)
-                        pdf.cell(20, 6, qtd_p, 1)
-                        pdf.cell(20, 6, un_p, 1)
-                        pdf.cell(60, 6, obs_p, 1)
-                        pdf.ln()
+                        pdf.cell(90, 6, limpar_texto_pdf(f" {str(r['Nome_Produto'])[:40]}"), 1)
+                        pdf.cell(20, 6, str(r['Quantidade']), 1); pdf.cell(20, 6, limpar_texto_pdf(r.get('Unidade_Medida', '')), 1)
+                        pdf.cell(60, 6, limpar_texto_pdf(str(r.get('Observacao', ''))[:30]), 1); pdf.ln()
                     pdf.ln(2)
-                
-                pdf_bytes = pdf.output(dest='S').encode('latin-1')
-                c_d2.download_button("📄 Baixar PDF Oficial", pdf_bytes, f"{nome_arquivo_base}.pdf", "application/pdf", use_container_width=True)
-            else:
-                c_d2.warning("Instale 'fpdf' para gerar o PDF.")
+                c_d2.download_button("📄 Baixar PDF Oficial", pdf.output(dest='S').encode('latin-1'), f"{nome_arq}.pdf", "application/pdf", use_container_width=True)

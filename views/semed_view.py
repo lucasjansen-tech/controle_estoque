@@ -521,9 +521,15 @@ def renderizar_semed():
                         df_esc_up = pd.DataFrame([[dados_esc['ID_Escola'], up_nome, up_tipo]], columns=['ID_Escola', 'Nome_Escola', 'Tipo_Escola'])
                         salvar_dados(pd.concat([df_esc_resto, df_esc_up]), "db_escolas", modo='overwrite'); st.success("Atualizado!"); st.rerun()
 
-    # --- 8. ADMIN: GESTÃO DE USUÁRIOS ---
+# --- 8. ADMIN: GESTÃO DE USUÁRIOS ---
     elif menu == "👥 Gestão de Usuários":
         st.subheader("👥 Controle de Acessos e Perfis")
+        
+        # 1. CRIANDO A "MÁSCARA" DE NOMES: Dicionário que traduz o ID para o Nome da Escola
+        dict_nomes_escolas = {"NENHUMA (Acesso Global)": "NENHUMA (Acesso Global)"}
+        if not df_esc.empty:
+            for _, row in df_esc.iterrows():
+                dict_nomes_escolas[row['ID_Escola']] = row['Nome_Escola']
         
         with st.container(border=True):
             st.markdown("**🔍 Filtros Avançados de Usuário**")
@@ -565,6 +571,8 @@ def renderizar_semed():
                         st.warning(f"Usuário removido!"); st.rerun()
 
         tab_u_add, tab_u_edit = st.tabs(["➕ Cadastrar Usuário", "✏️ Editar Credenciais (Resetar Senha)"])
+        
+        # A lista continua sendo de IDs para o banco salvar corretamente
         lista_escolas_u = ["NENHUMA (Acesso Global)"] + df_esc['ID_Escola'].tolist()
         perfis_disp = ["ESCOLA", "COORDENADOR", "ADMIN"]
 
@@ -574,7 +582,10 @@ def renderizar_semed():
                 u_email = c1.text_input("E-mail (Login)")
                 u_senha = c1.text_input("Senha", type="password")
                 u_perfil = c2.selectbox("Perfil", perfis_disp)
-                u_esc = c2.selectbox("Vincular à Escola", lista_escolas_u)
+                
+                # 2. APLICAÇÃO DA MÁSCARA (format_func): Você vê o nome, o Streamlit guarda o ID
+                u_esc = c2.selectbox("Vincular à Escola", lista_escolas_u, format_func=lambda x: dict_nomes_escolas.get(x, str(x)))
+                
                 if st.form_submit_button("Salvar Usuário"):
                     if u_email and u_senha:
                         novo_u = pd.DataFrame([[f"USR-{datetime.now().strftime('%H%M%S')}", u_email, u_senha, u_perfil, u_esc]], columns=['ID_Usuario', 'Email', 'Senha_Hash', 'Perfil', 'ID_Escola'])
@@ -594,7 +605,9 @@ def renderizar_semed():
                     up_perfil = c2.selectbox("Alterar Perfil", perfis_disp, index=idx_p)
                     
                     idx_e = lista_escolas_u.index(dados_usr['ID_Escola']) if dados_usr['ID_Escola'] in lista_escolas_u else 0
-                    up_esc = c2.selectbox("Alterar Vínculo Escolar", lista_escolas_u, index=idx_e)
+                    
+                    # 3. APLICAÇÃO DA MÁSCARA NA EDIÇÃO TAMBÉM
+                    up_esc = c2.selectbox("Alterar Vínculo Escolar", lista_escolas_u, index=idx_e, format_func=lambda x: dict_nomes_escolas.get(x, str(x)))
                     
                     if st.form_submit_button("Atualizar Credenciais"):
                         senha_final = up_senha if up_senha else dados_usr['Senha_Hash']

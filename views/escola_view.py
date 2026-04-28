@@ -26,12 +26,12 @@ def limpar_texto_pdf(texto):
 def renderizar_escola():
     user_data = st.session_state['usuario_dados']
     
-    # --- VACINA DE LEITURA DO ID ---
     # Tenta pegar a chave de todas as formas possíveis (maiúscula ou minúscula)
     id_escola = user_data.get('id_escola', user_data.get('ID_Escola', ''))
     
     df_esc_ref = carregar_dados("db_escolas")
     df_cat = carregar_dados("db_catalogo")
+    df_usuarios = carregar_dados("db_usuarios")
     
     # Proteção caso a base de escolas esteja vazia
     if not df_esc_ref.empty and 'ID_Escola' in df_esc_ref.columns:
@@ -50,7 +50,7 @@ def renderizar_escola():
     """, unsafe_allow_html=True)
     st.write("")
 
-    # --- MENU LATERAL (NOMECLATURA ATUALIZADA) ---
+    # --- MENU LATERAL ---
     menu = st.sidebar.radio("Navegação Principal", [
         "🏠 Raio-X da Escola", 
         "📦 Receber Materiais", 
@@ -59,7 +59,7 @@ def renderizar_escola():
         "📜 Relatórios Oficiais"
     ])
 
-# --- LIMPADOR DE SESSÃO FANTASMA (UX) ---
+    # --- LIMPADOR DE SESSÃO FANTASMA (UX) ---
     if 'menu_anterior' not in st.session_state:
         st.session_state.menu_anterior = menu
     if st.session_state.menu_anterior != menu:
@@ -72,11 +72,10 @@ def renderizar_escola():
     if st.sidebar.button("🔄 Sincronizar Sistema", use_container_width=True):
         st.cache_data.clear()
         st.rerun()
-
-    # --- NOVO: BOTÃO DE SAIR ---
+        
     if st.sidebar.button("🚪 Sair do Sistema", type="primary", use_container_width=True):
-        st.session_state.clear()  # Apaga todos os dados do usuário da memória
-        st.rerun()  # Força a página a recarregar, voltando para o app.py (Tela de Login)
+        st.session_state.clear()
+        st.rerun()
 
     # --- 1. RAIO-X DA ESCOLA ---
     if menu == "🏠 Raio-X da Escola":
@@ -92,7 +91,8 @@ def renderizar_escola():
                     st.markdown(f"### {row['Saldo']}")
                     st.caption(f"{row['Unidade_Medida']}")
                     st.markdown(f"**{row['Nome_Produto']}**")
-        else: st.info("Estoque vazio ou não registrado.")
+        else:
+            st.info("Estoque vazio ou não registrado.")
 
     # --- 2. RECEBER MATERIAIS ---
     elif menu == "📦 Receber Materiais":
@@ -123,7 +123,8 @@ def renderizar_escola():
                 
                 if len(st.session_state.lista_itens) > 1:
                     if cd.button("❌", key=f"rec_del_{item['id']}"):
-                        st.session_state.lista_itens.pop(i); st.rerun()
+                        st.session_state.lista_itens.pop(i)
+                        st.rerun()
 
         if st.button("➕ Adicionar outro produto"):
             st.session_state.lista_itens.append({'id': len(st.session_state.lista_itens)+1, 'prod': None, 'qtd': 0.0, 'obs': ""})
@@ -191,14 +192,19 @@ def renderizar_escola():
                             if trava:
                                 if not is_ex:
                                     if c3.button("🗑️ Excluir", key=f"ex_{idx}"):
-                                        st.session_state.ids_excluir.append(str(row['ID_Movimentacao'])); st.rerun()
+                                        st.session_state.ids_excluir.append(str(row['ID_Movimentacao']))
+                                        st.rerun()
                                 else:
                                     if c3.button("🔄 Manter", key=f"un_{idx}"):
-                                        st.session_state.ids_excluir.remove(str(row['ID_Movimentacao'])); st.rerun()
-                            else: c3.write("🔒")
+                                        st.session_state.ids_excluir.remove(str(row['ID_Movimentacao']))
+                                        st.rerun()
+                            else:
+                                c3.write("🔒")
                             
                             if not is_ex:
-                                l_up = row.to_dict(); l_up['Quantidade'] = val_q; novos_v.append(l_up)
+                                l_up = row.to_dict()
+                                l_up['Quantidade'] = val_q
+                                novos_v.append(l_up)
 
                     with st.expander("➕ Adicionar Novo Produto a esta Nota"):
                         n_p = st.selectbox("Selecione o Produto", [None] + df_cat['Nome_Produto'].tolist())
@@ -211,7 +217,8 @@ def renderizar_escola():
                                                      columns=['ID_Movimentacao','Data_Hora','ID_Escola','Tipo_Fluxo','Origem','Destino','ID_Produto','Quantidade','Unidade_Medida','Observacao','ID_Usuario','Documento_Ref'])
                                 salvar_dados(pd.concat([carregar_dados("db_movimentacoes"), nova_l]), "db_movimentacoes", modo='overwrite')
                                 registrar_log(email_usr, "ADIÇÃO", itens.iloc[0]['Documento_Ref'], n_p, n_q)
-                                st.success("Adicionado!"); st.rerun()
+                                st.success("Adicionado!")
+                                st.rerun()
 
                     if st.button("💾 SALVAR ALTERAÇÕES NESTA NOTA", type="primary", use_container_width=True):
                         # --- MOTOR DE PROTEÇÃO DE ESTOQUE NEGATIVO RETROATIVO ---
@@ -252,13 +259,16 @@ def renderizar_escola():
                             
                             for mid in st.session_state.ids_excluir:
                                 it_log = itens[itens['ID_Movimentacao'] == mid]
-                                if not it_log.empty: registrar_log(email_usr, "EXCLUSÃO", it_log.iloc[0]['Documento_Ref'], it_log.iloc[0]['Nome_Produto'], it_log.iloc[0]['Quantidade'])
+                                if not it_log.empty: 
+                                    registrar_log(email_usr, "EXCLUSÃO", it_log.iloc[0]['Documento_Ref'], it_log.iloc[0]['Nome_Produto'], it_log.iloc[0]['Quantidade'])
 
                             df_r = df_full[~df_full['ID_Movimentacao'].astype(str).isin(ids_nota)]
                             df_n = pd.DataFrame(novos_v).drop(columns=['Nome_Produto', 'Label', 'ID_Lote', 'DT_OBJ'], errors='ignore')
                             
                             if salvar_dados(pd.concat([df_r, df_n]).fillna(""), "db_movimentacoes", modo='overwrite'):
-                                st.session_state.ids_excluir = []; st.success("Atualizado com Sucesso!"); st.rerun()
+                                st.session_state.ids_excluir = []
+                                st.success("Atualizado com Sucesso!")
+                                st.rerun()
             else:
                 st.warning("Nenhum lançamento encontrado com os filtros aplicados.")
 
@@ -286,13 +296,14 @@ def renderizar_escola():
                 email_usr = user_data.get('email', user_data.get('Email', ''))
                 df_s = pd.DataFrame([[f"SAI-{datetime.now().strftime('%H%M%S')}", d_u.strftime('%d/%m/%Y'), id_escola, "SAÍDA", nome_escola, "CONSUMO", cat_u['ID_Produto'], q_u, cat_u['Unidade_Medida'], o_u, email_usr, "USO DIÁRIO"]], 
                                     columns=['ID_Movimentacao','Data_Hora','ID_Escola','Tipo_Fluxo','Origem','Destino','ID_Produto','Quantidade','Unidade_Medida','Observacao','ID_Usuario','Documento_Ref'])
-                salvar_dados(df_s, "db_movimentacoes", modo='append'); st.success("Saída Registrada!"); st.rerun()
+                salvar_dados(df_s, "db_movimentacoes", modo='append')
+                st.success("Saída Registrada!")
+                st.rerun()
 
-# --- 5. RELATÓRIOS OFICIAIS (VERSÃO FINAL BLINDADA) ---
+    # --- 5. RELATÓRIOS OFICIAIS ---
     elif menu == "📜 Relatórios Oficiais":
         st.subheader("📜 Histórico Consolidado e Filtrado")
         df_m = carregar_dados("db_movimentacoes")
-        df_usuarios = carregar_dados("db_usuarios") # Necessário para o tradutor de nomes
 
         if not df_m.empty and 'ID_Escola' in df_m.columns:
             df_m = df_m[df_m['ID_Escola'] == id_escola].copy()
@@ -331,25 +342,44 @@ def renderizar_escola():
             st.divider()
             c_d1, c_d2 = st.columns(2)
             csv = df_m.drop(columns=['DT_OBJ', 'Lote', 'Nome_Produto'], errors='ignore').to_csv(index=False).encode('utf-8-sig')
-            c_d1.download_button("📊 Baixar Excel", csv, f"{nome_arq}.csv", use_container_width=True)
+            c_d1.download_button("📊 Baixar Excel Detalhado", csv, f"{nome_arq}.csv", use_container_width=True)
             
             if FPDF:
                 pdf = FPDF()
                 pdf.add_page()
-                try: pdf.image("Banner.png", x=10, y=10, w=190); pdf.set_y(50) 
-                except: pdf.set_y(10)
-                pdf.set_font("Arial", 'B', 14); pdf.cell(190, 8, "PREFEITURA MUNICIPAL DE RAPOSA", ln=True, align='C')
+                
+                try: 
+                    pdf.image("Banner.png", x=10, y=10, w=190)
+                    pdf.set_y(50) 
+                except Exception:
+                    pdf.set_y(10)
+
+                pdf.set_font("Arial", 'B', 14)
+                pdf.cell(190, 8, "PREFEITURA MUNICIPAL DE RAPOSA", ln=True, align='C')
                 pdf.cell(190, 8, "SECRETARIA MUNICIPAL DE EDUCACAO - SEMED", ln=True, align='C')
-                pdf.set_font("Arial", 'B', 12); pdf.cell(190, 7, limpar_texto_pdf(f"Unidade Escolar: {nome_escola}"), ln=True, align='C')
-                pdf.set_font("Arial", '', 10); pdf.cell(190, 6, limpar_texto_pdf(f"Período: {str_periodo.replace('_', ' ')}"), ln=True, align='C'); pdf.ln(6)
+                
+                pdf.set_font("Arial", 'B', 12)
+                pdf.cell(190, 7, limpar_texto_pdf(f"Unidade Escolar: {nome_escola}"), ln=True, align='C')
+                
+                pdf.set_font("Arial", '', 10)
+                pdf.cell(190, 6, limpar_texto_pdf(f"Período: {str_periodo.replace('_', ' ')}"), ln=True, align='C')
+                pdf.ln(6)
                 
                 for (lote, doc, data, resp), group in grupos:
-                    pdf.set_font("Arial", 'B', 9); pdf.set_fill_color(240, 240, 240)
+                    pdf.set_font("Arial", 'B', 9)
+                    pdf.set_fill_color(240, 240, 240)
                     pdf.cell(190, 8, limpar_texto_pdf(f" NOTA: {doc} | DATA: {data} | RESP: {resp}"), 1, 1, 'L', True)
+                    
                     pdf.set_font("Arial", '', 8)
                     for _, r in group.iterrows():
                         pdf.cell(90, 6, limpar_texto_pdf(f" {str(r['Nome_Produto'])[:40]}"), 1)
-                        pdf.cell(20, 6, str(r['Quantidade']), 1); pdf.cell(20, 6, limpar_texto_pdf(r.get('Unidade_Medida', '')), 1)
-                        pdf.cell(60, 6, limpar_texto_pdf(str(r.get('Observacao', ''))[:30]), 1); pdf.ln()
+                        pdf.cell(20, 6, str(r['Quantidade']), 1)
+                        pdf.cell(20, 6, limpar_texto_pdf(r.get('Unidade_Medida', '')), 1)
+                        pdf.cell(60, 6, limpar_texto_pdf(str(r.get('Observacao', ''))[:30]), 1)
+                        pdf.ln()
                     pdf.ln(2)
-                c_d2.download_button("📄 Baixar PDF Oficial", pdf.output(dest='S').encode('latin-1'), f"{nome_arq}.pdf", "application/pdf", use_container_width=True)
+                
+                pdf_bytes = pdf.output(dest='S').encode('latin-1')
+                c_d2.download_button("📄 Baixar PDF Oficial", pdf_bytes, f"{nome_arq}.pdf", "application/pdf", use_container_width=True)
+            else:
+                c_d2.warning("Instale 'fpdf' para gerar o PDF.")

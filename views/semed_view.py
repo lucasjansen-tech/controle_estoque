@@ -506,7 +506,7 @@ def renderizar_semed():
             else:
                 c_d2.warning("Instale 'fpdf' para gerar o PDF.")
 
-    # --- 7. ADMIN: GESTÃO DE UNIDADES ---
+# --- 7. ADMIN: GESTÃO DE UNIDADES ---
     elif menu == "🏫 Gestão de Unidades":
         st.subheader("🏫 Gestão de Unidades de Ensino")
         
@@ -525,7 +525,8 @@ def renderizar_semed():
             
         st.dataframe(df_esc_view, use_container_width=True, hide_index=True)
         
-        tab_add, tab_edit = st.tabs(["➕ Adicionar Escola", "✏️ Editar Escola Existente"])
+        # --- NOVO: Três abas em vez de duas ---
+        tab_add, tab_lote, tab_edit = st.tabs(["➕ Adição Individual", "📋 Adição em Lote", "✏️ Editar Escola Existente"])
         
         with tab_add:
             with st.form("f_add_esc"):
@@ -541,6 +542,44 @@ def renderizar_semed():
                         st.rerun()
                     else:
                         st.error("O nome é obrigatório.")
+                        
+        with tab_lote:
+            st.info("Adicione múltiplas unidades de ensino simultaneamente.")
+            if 'lote_esc' not in st.session_state: 
+                st.session_state.lote_esc = [{'id': 0, 'nome': '', 'tipo': 'Polo Fundamental (1º ao 9º Ano)'}]
+                
+            for i, item in enumerate(st.session_state.lote_esc):
+                c1, c2, c3 = st.columns([3, 2, 0.5])
+                st.session_state.lote_esc[i]['nome'] = c1.text_input("Nome da Unidade", key=f"le_n_{item['id']}")
+                st.session_state.lote_esc[i]['tipo'] = c2.selectbox("Nível de Ensino", tipos_ensino, key=f"le_t_{item['id']}")
+                
+                if len(st.session_state.lote_esc) > 1:
+                    if c3.button("❌", key=f"le_d_{item['id']}"):
+                        st.session_state.lote_esc.pop(i)
+                        st.rerun()
+                        
+            if st.button("➕ Adicionar Linha"):
+                st.session_state.lote_esc.append({'id': len(st.session_state.lote_esc)+1, 'nome': '', 'tipo': 'Polo Fundamental (1º ao 9º Ano)'})
+                st.rerun()
+                
+            if st.button("✅ SALVAR LOTE DE UNIDADES", type="primary"):
+                novos = []
+                t_base = datetime.now().strftime('%H%M%S')
+                for idx, it in enumerate(st.session_state.lote_esc):
+                    if it['nome']:
+                        # Cria um ID único para cada escola do lote
+                        novo_id = f"ESC-{t_base}{idx}"
+                        novos.append([novo_id, it['nome'], it['tipo']])
+                        
+                if novos:
+                    df_novos = pd.DataFrame(novos, columns=['ID_Escola', 'Nome_Escola', 'Tipo_Escola'])
+                    salvar_dados(pd.concat([df_esc, df_novos]), "db_escolas", modo='overwrite')
+                    st.success(f"{len(novos)} unidades cadastradas em lote!")
+                    # Limpa a tela após salvar
+                    st.session_state.lote_esc = [{'id': 0, 'nome': '', 'tipo': 'Polo Fundamental (1º ao 9º Ano)'}]
+                    st.rerun()
+                else:
+                    st.error("Preencha pelo menos o Nome de uma Unidade.")
                     
         with tab_edit:
             esc_editar = st.selectbox("Selecione a Escola para Editar", [None] + df_esc['Nome_Escola'].sort_values().tolist())

@@ -387,7 +387,7 @@ def renderizar_semed():
                 st.success("Baixa Executada!")
                 st.rerun()
 
-    # --- 6. RELATÓRIOS GLOBAIS ---
+# --- 6. RELATÓRIOS GLOBAIS ---
     elif menu == "📜 Relatórios Globais":
         st.subheader("📜 Extrator Consolidado da Rede")
         if not df_mov.empty and 'ID_Escola' in df_mov.columns:
@@ -399,8 +399,8 @@ def renderizar_semed():
                 st.markdown("**🔍 Filtros do Relatório**")
                 c1, c2, c3 = st.columns(3)
                 f_data = c1.date_input("Período", [datetime.now() - timedelta(days=30), datetime.now()], format="DD/MM/YYYY")
-                f_esc = c2.multiselect("Unidades (Vazio = Todas)", df_esc['Nome_Escola'].sort_values().tolist())
-                f_tipo = c3.multiselect("Fluxo", ["ENTRADA", "SAÍDA", "TRANSFERÊNCIA"])
+                f_esc = c2.multiselect("Unidades (Vazio = Todas)", df_esc['Nome_Escola'].sort_values().tolist(), placeholder="Selecione as unidades...")
+                f_tipo = c3.multiselect("Fluxo", ["ENTRADA", "SAÍDA", "TRANSFERÊNCIA"], placeholder="Selecione o fluxo...")
 
             # 1. Aplicação de Filtros
             if len(f_data) == 2:

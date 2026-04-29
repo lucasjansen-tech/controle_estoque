@@ -257,6 +257,11 @@ def renderizar_escola():
                             ids_nota = [str(x) for x in itens['ID_Movimentacao'].tolist()]
                             email_usr = user_data.get('email', user_data.get('Email', ''))
                             
+                            # --- SISTEMA DE LIXEIRA (ENVIANDO EXCLUÍDOS) ---
+                            if st.session_state.ids_excluir:
+                                df_lixo = df_full[df_full['ID_Movimentacao'].astype(str).isin(st.session_state.ids_excluir)]
+                                salvar_dados(df_lixo, "db_lixeira", modo='append')
+                            
                             for mid in st.session_state.ids_excluir:
                                 it_log = itens[itens['ID_Movimentacao'] == mid]
                                 if not it_log.empty: 
@@ -300,7 +305,7 @@ def renderizar_escola():
                 st.success("Saída Registrada!")
                 st.rerun()
 
-# --- 5. RELATÓRIOS OFICIAIS ---
+    # --- 5. RELATÓRIOS OFICIAIS ---
     elif menu == "📜 Relatórios Oficiais":
         st.subheader("📜 Histórico Consolidado e Filtrado")
         df_m = carregar_dados("db_movimentacoes")

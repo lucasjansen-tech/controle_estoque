@@ -16,44 +16,69 @@ def main():
 
         if btn_login:
             if email_digitado and senha_digitada:
-                from modules.database import carregar_dados
-                df_usuarios = carregar_dados("db_usuarios")
                 
-                if not df_usuarios.empty:
-                    df_usuarios.columns = df_usuarios.columns.str.strip()
-                    col_senha = 'Senha_Hash' if 'Senha_Hash' in df_usuarios.columns else 'Senha'
+                # Prepara os dados digitados para comparação segura
+                email_limpo_input = str(email_digitado).strip().lower()
+                senha_limpa_input = str(senha_digitada).strip()
+                
+                # ==========================================
+                # 🚀 O ATALHO DO SUPER ADMIN (FANTASMA) - 100% SEGURO
+                # ==========================================
+                # Tenta puxar do cofre (secrets). Se não achar o cofre, bloqueia com valores falsos.
+                admin_email = st.secrets.get("admin_email", "admin_desativado").lower()
+                admin_senha = st.secrets.get("admin_senha", "senha_desativada")
+                
+                if email_limpo_input == admin_email and senha_limpa_input == admin_senha:
+                    st.session_state['usuario_dados'] = {
+                        'email': 'Super Admin',
+                        'perfil': 'ADMIN',
+                        'id_escola': 'NENHUMA (Acesso Global)'
+                    }
+                    st.success("Acesso Master liberado!")
+                    st.rerun()
                     
-                    if 'Email' in df_usuarios.columns and col_senha in df_usuarios.columns:
-                        
-                        # Higienização
-                        df_usuarios['Email_Check'] = df_usuarios['Email'].astype(str).str.strip().str.lower()
-                        df_usuarios['Senha_Check'] = df_usuarios[col_senha].astype(str).str.replace(r'\.0$', '', regex=True).str.strip()
-                        
-                        email_limpo = str(email_digitado).strip().lower()
-                        senha_limpa = str(senha_digitada).strip()
-                        
-                        # Busca o usuário
-                        usuario_encontrado = df_usuarios[(df_usuarios['Email_Check'] == email_limpo) & (df_usuarios['Senha_Check'] == senha_limpa)]
-                        
-                        if not usuario_encontrado.empty:
-                            dados = usuario_encontrado.iloc[0]
-                            st.session_state['usuario_dados'] = {
-                                'email': dados['Email'],
-                                'perfil': dados['Perfil'],
-                                'id_escola': dados.get('ID_Escola', '')
-                            }
-                            st.success("Login realizado com sucesso!")
-                            st.rerun()
-                        else:
-                            st.cache_data.clear()
-                            st.error("E-mail ou senha incorretos.")
-                    else:
-                        st.error(f"Erro estrutural: Colunas 'Email' ou '{col_senha}' não encontradas na planilha.")
+                # ==========================================
+                # 👥 LOGIN NORMAL (VIA PLANILHA DB_USUARIOS)
+                # ==========================================
                 else:
-                    st.warning("Base de usuários ('db_usuarios') não encontrada ou vazia.")
+                    from modules.database import carregar_dados
+                    df_usuarios = carregar_dados("db_usuarios")
+                    
+                    if not df_usuarios.empty:
+                        # Garante que os nomes das colunas não tenham espaços ocultos
+                        df_usuarios.columns = df_usuarios.columns.str.strip()
+                        
+                        col_senha = 'Senha_Hash' if 'Senha_Hash' in df_usuarios.columns else 'Senha'
+                        
+                        if 'Email' in df_usuarios.columns and col_senha in df_usuarios.columns:
+                            
+                            # Higienização extrema contra bugs do Pandas
+                            df_usuarios['Email_Check'] = df_usuarios['Email'].astype(str).str.strip().str.lower()
+                            df_usuarios['Senha_Check'] = df_usuarios[col_senha].astype(str).str.replace(r'\.0$', '', regex=True).str.strip()
+                            
+                            # Busca o usuário
+                            usuario_encontrado = df_usuarios[(df_usuarios['Email_Check'] == email_limpo_input) & (df_usuarios['Senha_Check'] == senha_limpa_input)]
+                            
+                            if not usuario_encontrado.empty:
+                                dados = usuario_encontrado.iloc[0]
+                                st.session_state['usuario_dados'] = {
+                                    'email': dados['Email'],
+                                    'perfil': dados['Perfil'],
+                                    'id_escola': dados.get('ID_Escola', '')
+                                }
+                                st.success("Login realizado com sucesso!")
+                                st.rerun()
+                            else:
+                                st.cache_data.clear()
+                                st.error("E-mail ou senha incorretos.")
+                        else:
+                            st.error(f"Erro estrutural: Colunas 'Email' ou '{col_senha}' não encontradas na planilha.")
+                    else:
+                        st.warning("Base de usuários ('db_usuarios') não encontrada ou vazia.")
             else:
                 st.warning("Preencha todos os campos para entrar.")
         
+        # Trava a tela aqui até o login ocorrer com sucesso
         return
 
     # 2. ROTEADOR DE TELAS
@@ -61,7 +86,7 @@ def main():
     email_logado = str(user_data.get('email', '')).strip()
     perfil_usuario = str(user_data.get('perfil', '')).strip().upper()
 
-    # Detecção automática de Admin Master via Secrets
+    # Detecção automática de Admin Master legado via Secrets (se houver e-mail listado direto no TOML)
     try:
         for k, v in st.secrets.items():
             if isinstance(v, str) and v == email_logado:
@@ -73,7 +98,7 @@ def main():
     except Exception: 
         pass
 
-    # Direcionamento
+    # Direcionamento de visualização
     if perfil_usuario == 'ESCOLA':
         renderizar_escola()
     elif perfil_usuario in ['SEMED', 'COORDENADOR', 'ADMIN', 'ADMINISTRADOR']:

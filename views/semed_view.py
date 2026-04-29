@@ -30,13 +30,9 @@ def renderizar_semed():
     # --- DETECÇÃO DO ADMIN MASTER (st.secrets) ---
     eh_admin_master = False
     try:
-        for k, v in st.secrets.items():
-            if isinstance(v, str) and v == email_logado:
+        if isinstance(st.secrets.get("root_user"), dict):
+            if email_logado == st.secrets["root_user"].get("email"):
                 eh_admin_master = True
-            elif isinstance(v, dict):
-                for sub_v in v.values():
-                    if isinstance(sub_v, str) and sub_v == email_logado:
-                        eh_admin_master = True
     except Exception:
         pass
 
@@ -69,7 +65,7 @@ def renderizar_semed():
     """, unsafe_allow_html=True)
     st.write("")
 
-    # --- MENU DINÂMICO (CONTROLE RIGOROSO DE ACESSOS) ---
+    # --- MENU DINÂMICO ---
     opcoes_menu = [
         "📊 Visão Geral da Rede", 
         "🏫 Raio-X por Escola", 
@@ -83,7 +79,8 @@ def renderizar_semed():
         opcoes_menu.extend([
             "🏫 Gestão de Unidades",
             "👥 Gestão de Usuários", 
-            "⚙️ Gerenciar Catálogo", 
+            "⚙️ Gerenciar Catálogo",
+            "🗑️ Lixeira / Restauração",
             "🕵️ Auditoria do Sistema"
         ])
 
@@ -312,7 +309,6 @@ def renderizar_semed():
                         estoque_invalido = False
                         mensagens_erro = []
 
-                        # Verifica exclusões de entradas
                         for mid in st.session_state.idx_ex_sem:
                             it_del = itens[itens['ID_Movimentacao'] == mid]
                             if not it_del.empty and it_del.iloc[0]['Tipo_Fluxo'] == 'ENTRADA':
@@ -322,7 +318,6 @@ def renderizar_semed():
                                     estoque_invalido = True
                                     mensagens_erro.append(f"Excluir a entrada de '{it_del.iloc[0]['Nome_Produto']}' deixará o estoque negativo.")
 
-                        # Verifica reduções de entradas
                         for l_up in novos_v:
                             it_orig = itens[itens['ID_Movimentacao'] == l_up['ID_Movimentacao']]
                             if not it_orig.empty and it_orig.iloc[0]['Tipo_Fluxo'] == 'ENTRADA':
@@ -342,6 +337,12 @@ def renderizar_semed():
                         else:
                             df_full = carregar_dados("db_movimentacoes")
                             ids_nota = [str(x) for x in itens['ID_Movimentacao'].tolist()]
+                            
+                            # --- SISTEMA DE LIXEIRA (ENVIANDO EXCLUÍDOS) ---
+                            if st.session_state.idx_ex_sem:
+                                df_lixo = df_full[df_full['ID_Movimentacao'].astype(str).isin(st.session_state.idx_ex_sem)]
+                                salvar_dados(df_lixo, "db_lixeira", modo='append')
+                            
                             for mid in st.session_state.idx_ex_sem:
                                 it_log = itens[itens['ID_Movimentacao'] == mid]
                                 if not it_log.empty:
@@ -387,7 +388,7 @@ def renderizar_semed():
                 st.success("Baixa Executada!")
                 st.rerun()
 
-# --- 6. RELATÓRIOS GLOBAIS ---
+    # --- 6. RELATÓRIOS GLOBAIS ---
     elif menu == "📜 Relatórios Globais":
         st.subheader("📜 Extrator Consolidado da Rede")
         if not df_mov.empty and 'ID_Escola' in df_mov.columns:
@@ -402,7 +403,6 @@ def renderizar_semed():
                 f_esc = c2.multiselect("Unidades (Vazio = Todas)", df_esc['Nome_Escola'].sort_values().tolist(), placeholder="Selecione as unidades...")
                 f_tipo = c3.multiselect("Fluxo", ["ENTRADA", "SAÍDA", "TRANSFERÊNCIA"], placeholder="Selecione o fluxo...")
 
-            # 1. Aplicação de Filtros
             if len(f_data) == 2:
                 df_rel = df_rel[(df_rel['DT_OBJ'].dt.date >= f_data[0]) & (df_rel['DT_OBJ'].dt.date <= f_data[1])]
             if f_tipo:
@@ -411,13 +411,11 @@ def renderizar_semed():
                 ids_f = df_esc[df_esc['Nome_Escola'].isin(f_esc)]['ID_Escola'].tolist()
                 df_rel = df_rel[df_rel['ID_Escola'].isin(ids_f)]
 
-            # 2. Tradutor de E-mail para Nome do Usuário
             dict_nomes_usuarios = {}
             if not df_usuarios.empty and 'Nome' in df_usuarios.columns:
                 dict_nomes_usuarios = df_usuarios.set_index('Email')['Nome'].to_dict()
             df_rel['Responsavel'] = df_rel['ID_Usuario'].map(lambda x: dict_nomes_usuarios.get(x, x))
 
-            # 3. Nomenclatura Dinâmica para Arquivos
             str_periodo = f"{f_data[0].strftime('%d-%m-%Y')}_a_{f_data[1].strftime('%d-%m-%Y')}" if len(f_data) == 2 else "Geral"
             if f_esc and len(f_esc) == 1:
                 nome_arq = f"Relatorio_{limpar_texto_pdf(f_esc[0]).replace(' ', '_')}_{str_periodo}"
@@ -506,7 +504,7 @@ def renderizar_semed():
             else:
                 c_d2.warning("Instale 'fpdf' para gerar o PDF.")
 
-# --- 7. ADMIN: GESTÃO DE UNIDADES ---
+    # --- 7. ADMIN: GESTÃO DE UNIDADES ---
     elif menu == "🏫 Gestão de Unidades":
         st.subheader("🏫 Gestão de Unidades de Ensino")
         
@@ -525,7 +523,6 @@ def renderizar_semed():
             
         st.dataframe(df_esc_view, use_container_width=True, hide_index=True)
         
-        # --- NOVO: Três abas em vez de duas ---
         tab_add, tab_lote, tab_edit = st.tabs(["➕ Adição Individual", "📋 Adição em Lote", "✏️ Editar Escola Existente"])
         
         with tab_add:
@@ -567,7 +564,6 @@ def renderizar_semed():
                 t_base = datetime.now().strftime('%H%M%S')
                 for idx, it in enumerate(st.session_state.lote_esc):
                     if it['nome']:
-                        # Cria um ID único para cada escola do lote
                         novo_id = f"ESC-{t_base}{idx}"
                         novos.append([novo_id, it['nome'], it['tipo']])
                         
@@ -575,7 +571,6 @@ def renderizar_semed():
                     df_novos = pd.DataFrame(novos, columns=['ID_Escola', 'Nome_Escola', 'Tipo_Escola'])
                     salvar_dados(pd.concat([df_esc, df_novos]), "db_escolas", modo='overwrite')
                     st.success(f"{len(novos)} unidades cadastradas em lote!")
-                    # Limpa a tela após salvar
                     st.session_state.lote_esc = [{'id': 0, 'nome': '', 'tipo': 'Polo Fundamental (1º ao 9º Ano)'}]
                     st.rerun()
                 else:
@@ -607,7 +602,6 @@ def renderizar_semed():
     elif menu == "👥 Gestão de Usuários":
         st.subheader("👥 Controle de Acessos e Perfis")
         
-        # PREVENÇÃO: Se a coluna Nome não existir, cria ela como backup
         if not df_usuarios.empty and 'Nome' not in df_usuarios.columns:
             df_usuarios['Nome'] = df_usuarios['Email']
             
@@ -762,7 +756,49 @@ def renderizar_semed():
                 else:
                     st.error("Preencha Códigos e Nomes.")
 
-    # --- 10. ADMIN: AUDITORIA ---
+    # --- 10. ADMIN: LIXEIRA ---
+    elif menu == "🗑️ Lixeira / Restauração":
+        st.subheader("🗑️ Lixeira de Lançamentos Excluídos")
+        st.info("Aqui ficam os lançamentos que foram apagados. Você pode restaurá-los para o estoque caso tenham sido excluídos por engano.")
+        
+        try:
+            df_lixeira = carregar_dados("db_lixeira")
+        except Exception:
+            df_lixeira = pd.DataFrame()
+            
+        if not df_lixeira.empty:
+            df_lix_view = df_lixeira.copy()
+            if not df_cat.empty and 'ID_Produto' in df_lix_view.columns:
+                df_lix_view = pd.merge(df_lix_view, df_cat[['ID_Produto', 'Nome_Produto']], on='ID_Produto', how='left')
+            else:
+                df_lix_view['Nome_Produto'] = "Produto Desconhecido"
+            
+            df_lix_view['Label'] = df_lix_view['Nome_Produto'].astype(str) + " (Qtd: " + df_lix_view['Quantidade'].astype(str) + ") - Nota: " + df_lix_view['Documento_Ref'].astype(str) + " - Destino: " + df_lix_view['Destino'].astype(str) + " [" + df_lix_view['ID_Movimentacao'].astype(str) + "]"
+            
+            colunas_ver = ['Data_Hora', 'Origem', 'Destino', 'Tipo_Fluxo', 'Nome_Produto', 'Quantidade', 'Documento_Ref', 'ID_Usuario']
+            colunas_ver = [c for c in colunas_ver if c in df_lix_view.columns]
+            st.dataframe(df_lix_view[colunas_ver], use_container_width=True, hide_index=True)
+            
+            sel_rest = st.selectbox("Selecione o item que deseja restaurar:", [None] + df_lix_view['Label'].tolist())
+            
+            if sel_rest:
+                id_alvo = sel_rest.split("[")[-1].replace("]", "")
+                if st.button("🔄 Restaurar Este Item para o Estoque", type="primary"):
+                    item_rec = df_lixeira[df_lixeira['ID_Movimentacao'] == id_alvo]
+                    
+                    salvar_dados(item_rec, "db_movimentacoes", modo='append')
+                    
+                    df_lix_novo = df_lixeira[df_lixeira['ID_Movimentacao'] != id_alvo]
+                    salvar_dados(df_lix_novo, "db_lixeira", modo='overwrite')
+                    
+                    registrar_log(email_logado, "RESTAURAÇÃO", item_rec.iloc[0]['Documento_Ref'], "Item Restaurado", item_rec.iloc[0]['Quantidade'])
+                    
+                    st.success("Item restaurado com sucesso! O estoque foi atualizado.")
+                    st.rerun()
+        else:
+            st.success("A lixeira está vazia. Nenhum item foi excluído recentemente.")
+
+    # --- 11. ADMIN: AUDITORIA ---
     elif menu == "🕵️ Auditoria do Sistema":
         st.subheader("🕵️ Buscador de Logs e Auditoria")
         df_logs = carregar_dados("db_logs")

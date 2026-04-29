@@ -20,9 +20,7 @@ def main():
                 df_usuarios = carregar_dados("db_usuarios")
                 
                 if not df_usuarios.empty:
-                    # Garante que os nomes das colunas não tenham espaços ocultos
                     df_usuarios.columns = df_usuarios.columns.str.strip()
-                    
                     col_senha = 'Senha_Hash' if 'Senha_Hash' in df_usuarios.columns else 'Senha'
                     
                     if 'Email' in df_usuarios.columns and col_senha in df_usuarios.columns:
@@ -49,21 +47,13 @@ def main():
                         else:
                             st.cache_data.clear()
                             st.error("E-mail ou senha incorretos.")
-                            
-                            # --- MODO DETETIVE LIGADO ---
-                            st.warning("🔍 MODO DEBUG ATIVADO: Veja abaixo o porquê o sistema está negando o acesso:")
-                            st.info(f"O que você digitou -> E-mail: '{email_limpo}' | Senha: '{senha_limpa}'")
-                            st.info(f"E-mails encontrados no banco: {df_usuarios['Email_Check'].tolist()}")
-                            st.info(f"Senhas encontradas no banco: {df_usuarios['Senha_Check'].tolist()}")
-                            # -----------------------------
                     else:
-                        st.error(f"Erro estrutural: Colunas 'Email' ou '{col_senha}' não encontradas. Colunas atuais no banco: {df_usuarios.columns.tolist()}")
+                        st.error(f"Erro estrutural: Colunas 'Email' ou '{col_senha}' não encontradas na planilha.")
                 else:
                     st.warning("Base de usuários ('db_usuarios') não encontrada ou vazia.")
             else:
                 st.warning("Preencha todos os campos para entrar.")
         
-        # Trava a tela aqui até o login ocorrer com sucesso
         return
 
     # 2. ROTEADOR DE TELAS

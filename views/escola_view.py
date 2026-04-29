@@ -300,10 +300,11 @@ def renderizar_escola():
                 st.success("Saída Registrada!")
                 st.rerun()
 
-    # --- 5. RELATÓRIOS OFICIAIS ---
+# --- 5. RELATÓRIOS OFICIAIS ---
     elif menu == "📜 Relatórios Oficiais":
         st.subheader("📜 Histórico Consolidado e Filtrado")
         df_m = carregar_dados("db_movimentacoes")
+        df_usuarios = carregar_dados("db_usuarios")
 
         if not df_m.empty and 'ID_Escola' in df_m.columns:
             df_m = df_m[df_m['ID_Escola'] == id_escola].copy()
@@ -314,7 +315,7 @@ def renderizar_escola():
                 st.markdown("**🔍 Filtros do Relatório**")
                 c1, c2 = st.columns(2)
                 f_data = c1.date_input("Período de Análise", [datetime.now() - timedelta(days=30), datetime.now()], format="DD/MM/YYYY")
-                f_tipo_rel = c2.multiselect("Tipo de Movimentação", ["ENTRADA", "SAÍDA", "TRANSFERÊNCIA"])
+                f_tipo_rel = c2.multiselect("Tipo de Movimentação", ["ENTRADA", "SAÍDA", "TRANSFERÊNCIA"], placeholder="Selecione o fluxo...")
                 
                 if len(f_data) == 2:
                     df_m = df_m[(df_m['DT_OBJ'].dt.date >= f_data[0]) & (df_m['DT_OBJ'].dt.date <= f_data[1])]

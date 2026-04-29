@@ -20,23 +20,37 @@ def main():
                 df_usuarios = carregar_dados("db_usuarios")
                 
                 if not df_usuarios.empty:
-                    usuario_encontrado = df_usuarios[(df_usuarios['Email'] == email_digitado) & (df_usuarios['Senha_Hash'] == senha_digitada)]
+                    # Identifica a coluna de senha correta (caso o nome varie no banco)
+                    col_senha = 'Senha_Hash' if 'Senha_Hash' in df_usuarios.columns else 'Senha'
                     
-                    if not usuario_encontrado.empty:
-                        dados = usuario_encontrado.iloc[0]
-                        st.session_state['usuario_dados'] = {
-                            'email': dados['Email'],
-                            'perfil': dados['Perfil'],
-                            'id_escola': dados.get('ID_Escola', '')
-                        }
-                        st.success("Login realizado!")
-                        st.rerun()
+                    if 'Email' in df_usuarios.columns and col_senha in df_usuarios.columns:
+                        # Tratamento: Força texto, remove espaços e ignora maiúsculas/minúsculas no e-mail
+                        emails_banco = df_usuarios['Email'].astype(str).str.strip().str.lower()
+                        senhas_banco = df_usuarios[col_senha].astype(str).str.strip()
+                        
+                        email_limpo = email_digitado.strip().lower()
+                        senha_limpa = senha_digitada.strip()
+                        
+                        # Busca o usuário com os dados higienizados
+                        usuario_encontrado = df_usuarios[(emails_banco == email_limpo) & (senhas_banco == senha_limpa)]
+                        
+                        if not usuario_encontrado.empty:
+                            dados = usuario_encontrado.iloc[0]
+                            st.session_state['usuario_dados'] = {
+                                'email': dados['Email'],
+                                'perfil': dados['Perfil'],
+                                'id_escola': dados.get('ID_Escola', '')
+                            }
+                            st.success("Login realizado com sucesso!")
+                            st.rerun()
+                        else:
+                            st.error("E-mail ou senha incorretos. Verifique se digitou corretamente.")
                     else:
-                        st.error("E-mail ou senha incorretos.")
+                        st.error(f"Erro no banco: Colunas 'Email' ou '{col_senha}' não encontradas.")
                 else:
-                    st.warning("Base de usuários não encontrada.")
+                    st.warning("Base de usuários não encontrada ou vazia.")
             else:
-                st.warning("Preencha todos os campos.")
+                st.warning("Preencha todos os campos para entrar.")
         return
 
     # 2. ROTEADOR DE TELAS
@@ -53,7 +67,8 @@ def main():
                 for sub_v in v.values():
                     if isinstance(sub_v, str) and sub_v == email_logado:
                         perfil_usuario = 'ADMIN'
-    except Exception: pass
+    except Exception: 
+        pass
 
     if perfil_usuario == 'ESCOLA':
         renderizar_escola()

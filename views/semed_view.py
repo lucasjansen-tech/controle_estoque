@@ -246,7 +246,7 @@ def renderizar_semed():
             else:
                 st.error("Insira o Documento.")
 
-    # --- 4. OPERAÇÃO: CORRIGIR NOTA ---
+# --- 4. OPERAÇÃO: CORRIGIR NOTA ---
     elif menu == "✏️ Operação: Corrigir Nota":
         st.subheader("✏️ Suporte Técnico: Edição")
         escola_alvo = st.selectbox("🏫 Escola Alvo:", df_esc['Nome_Escola'].sort_values().tolist())
@@ -341,7 +341,13 @@ def renderizar_semed():
                             # --- SISTEMA DE LIXEIRA (ENVIANDO EXCLUÍDOS) ---
                             if st.session_state.idx_ex_sem:
                                 df_lixo = df_full[df_full['ID_Movimentacao'].astype(str).isin(st.session_state.idx_ex_sem)]
-                                salvar_dados(df_lixo, "db_lixeira", modo='append')
+                                
+                                # Vacina: Verifica se a lixeira está crua/vazia para criar o cabeçalho
+                                df_teste_lixo = carregar_dados("db_lixeira")
+                                if df_teste_lixo.empty or 'ID_Movimentacao' not in df_teste_lixo.columns:
+                                    salvar_dados(df_lixo, "db_lixeira", modo='overwrite')
+                                else:
+                                    salvar_dados(df_lixo, "db_lixeira", modo='append')
                             
                             for mid in st.session_state.idx_ex_sem:
                                 it_log = itens[itens['ID_Movimentacao'] == mid]

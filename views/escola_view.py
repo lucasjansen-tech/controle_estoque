@@ -145,7 +145,7 @@ def renderizar_escola():
             else:
                 st.error("O Nº da Nota / Documento é obrigatório.")
 
-    # --- 3. CORRIGIR/ADICIONAR EM NOTA ---
+# --- 3. CORRIGIR/ADICIONAR EM NOTA ---
     elif menu == "✏️ Corrigir/Adicionar em Nota":
         st.subheader("✏️ Edição Avançada e Filtros")
         df_mov = carregar_dados("db_movimentacoes")
@@ -260,7 +260,13 @@ def renderizar_escola():
                             # --- SISTEMA DE LIXEIRA (ENVIANDO EXCLUÍDOS) ---
                             if st.session_state.ids_excluir:
                                 df_lixo = df_full[df_full['ID_Movimentacao'].astype(str).isin(st.session_state.ids_excluir)]
-                                salvar_dados(df_lixo, "db_lixeira", modo='append')
+                                
+                                # Vacina: Verifica se a lixeira está crua/vazia para criar o cabeçalho
+                                df_teste_lixo = carregar_dados("db_lixeira")
+                                if df_teste_lixo.empty or 'ID_Movimentacao' not in df_teste_lixo.columns:
+                                    salvar_dados(df_lixo, "db_lixeira", modo='overwrite')
+                                else:
+                                    salvar_dados(df_lixo, "db_lixeira", modo='append')
                             
                             for mid in st.session_state.ids_excluir:
                                 it_log = itens[itens['ID_Movimentacao'] == mid]

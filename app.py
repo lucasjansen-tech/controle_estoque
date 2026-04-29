@@ -14,25 +14,28 @@ def main():
             senha_digitada = st.text_input("Senha", type="password")
             btn_login = st.form_submit_button("Entrar", type="primary")
 
-        if btn_login:
+if btn_login:
             if email_digitado and senha_digitada:
                 from modules.database import carregar_dados
                 df_usuarios = carregar_dados("db_usuarios")
                 
                 if not df_usuarios.empty:
-                    # Identifica a coluna de senha correta (caso o nome varie no banco)
+                    # 1. Garante que os nomes das colunas não tenham espaços escondidos (ex: "Senha " virar "Senha")
+                    df_usuarios.columns = df_usuarios.columns.str.strip()
+                    
                     col_senha = 'Senha_Hash' if 'Senha_Hash' in df_usuarios.columns else 'Senha'
                     
                     if 'Email' in df_usuarios.columns and col_senha in df_usuarios.columns:
-                        # Tratamento: Força texto, remove espaços e ignora maiúsculas/minúsculas no e-mail
-                        emails_banco = df_usuarios['Email'].astype(str).str.strip().str.lower()
-                        senhas_banco = df_usuarios[col_senha].astype(str).str.strip()
                         
-                        email_limpo = email_digitado.strip().lower()
-                        senha_limpa = senha_digitada.strip()
+                        # 2. Tratamento Extremo: Força texto, minúsculas e remove o maldito ".0" se o Pandas inventar ele
+                        df_usuarios['Email_Check'] = df_usuarios['Email'].astype(str).str.strip().str.lower()
+                        df_usuarios['Senha_Check'] = df_usuarios[col_senha].astype(str).str.replace(r'\.0$', '', regex=True).str.strip()
                         
-                        # Busca o usuário com os dados higienizados
-                        usuario_encontrado = df_usuarios[(emails_banco == email_limpo) & (senhas_banco == senha_limpa)]
+                        email_limpo = str(email_digitado).strip().lower()
+                        senha_limpa = str(senha_digitada).strip()
+                        
+                        # 3. Busca o usuário com os dados 100% higienizados
+                        usuario_encontrado = df_usuarios[(df_usuarios['Email_Check'] == email_limpo) & (df_usuarios['Senha_Check'] == senha_limpa)]
                         
                         if not usuario_encontrado.empty:
                             dados = usuario_encontrado.iloc[0]
@@ -44,7 +47,9 @@ def main():
                             st.success("Login realizado com sucesso!")
                             st.rerun()
                         else:
-                            st.error("E-mail ou senha incorretos. Verifique se digitou corretamente.")
+                            # 4. A BALA DE PRATA: Se falhar, limpa o cache. Se for erro de memória antiga, o próximo clique resolve!
+                            st.cache_data.clear()
+                            st.error("E-mail ou senha incorretos. (Cache resetado: Tente clicar em Entrar novamente por garantia).")
                     else:
                         st.error(f"Erro no banco: Colunas 'Email' ou '{col_senha}' não encontradas.")
                 else:
@@ -52,7 +57,6 @@ def main():
             else:
                 st.warning("Preencha todos os campos para entrar.")
         return
-
     # 2. ROTEADOR DE TELAS
     user_data = st.session_state['usuario_dados']
     email_logado = str(user_data.get('email', '')).strip()

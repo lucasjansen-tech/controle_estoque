@@ -180,219 +180,255 @@ def renderizar_semed():
                 else: st.warning("A rede inteira está sem saldo positivo.")
         else: st.warning("Base vazia.")
 
-    # --- 2. RAIO-X POR ESCOLA ---
+# --- 2. RAIO-X POR ESCOLA ---
     elif menu == "🏫 Raio-X por Escola":
         st.subheader("🏫 Situação do Estoque")
-        escola_alvo = st.selectbox("Selecione a Unidade:", df_esc['Nome_Escola'].sort_values().tolist())
-        id_alvo = df_esc[df_esc['Nome_Escola'] == escola_alvo]['ID_Escola'].values[0]
-
-        saldo_esc = calcular_estoque_atual(id_alvo)
-        if not saldo_esc.empty:
-            saldo_esc = pd.merge(saldo_esc, df_cat, on='ID_Produto', how='left')
-            cat_f = st.multiselect("Filtrar Categoria", saldo_esc['Categoria'].unique())
-            if cat_f: saldo_esc = saldo_esc[saldo_esc['Categoria'].isin(cat_f)]
+        
+        # PROTEÇÃO: Só tenta buscar se existirem escolas cadastradas
+        if not df_esc.empty and 'Nome_Escola' in df_esc.columns:
+            lista_escolas = df_esc['Nome_Escola'].dropna().sort_values().tolist()
             
-            cols = st.columns(3)
-            for idx, row in saldo_esc.iterrows():
-                with cols[idx % 3].container(border=True):
-                    st.markdown(f"### {row['Saldo']}")
-                    st.caption(row['Unidade_Medida'])
-                    st.markdown(f"**{row['Nome_Produto']}**")
-        else: st.info("Estoque zerado ou não registrado.")
+            if lista_escolas:
+                escola_alvo = st.selectbox("Selecione a Unidade:", lista_escolas)
+                if escola_alvo:
+                    id_alvo = df_esc[df_esc['Nome_Escola'] == escola_alvo]['ID_Escola'].values[0]
+                    
+                    saldo_esc = calcular_estoque_atual(id_alvo)
+                    if not saldo_esc.empty:
+                        saldo_esc = pd.merge(saldo_esc, df_cat, on='ID_Produto', how='left')
+                        cat_f = st.multiselect("Filtrar Categoria", saldo_esc['Categoria'].unique())
+                        if cat_f: saldo_esc = saldo_esc[saldo_esc['Categoria'].isin(cat_f)]
+                        
+                        cols = st.columns(3)
+                        for idx, row in saldo_esc.iterrows():
+                            with cols[idx % 3].container(border=True):
+                                st.markdown(f"### {row['Saldo']}")
+                                st.caption(row['Unidade_Medida'])
+                                st.markdown(f"**{row['Nome_Produto']}**")
+                    else: st.info("Estoque zerado ou não registrado para esta unidade.")
+            else:
+                st.warning("Nenhuma unidade escolar encontrada. Cadastre uma unidade primeiro em 'Gestão de Unidades'.")
+        else:
+            st.warning("A base de escolas está vazia. Cadastre uma unidade primeiro no menu 'Gestão de Unidades'.")
 
     # --- 3. OPERAÇÃO: RECEBER MATERIAIS ---
     elif menu == "📦 Operação: Receber Materiais":
         st.subheader("📦 Registrar Recebimento para uma Unidade")
-        with st.container(border=True):
-            escola_alvo = st.selectbox("🏫 Escola de Destino:", df_esc['Nome_Escola'].sort_values().tolist())
-            id_alvo = df_esc[df_esc['Nome_Escola'] == escola_alvo]['ID_Escola'].values[0]
+        
+        if not df_esc.empty and 'Nome_Escola' in df_esc.columns:
+            lista_escolas = df_esc['Nome_Escola'].dropna().sort_values().tolist()
             
-            c1, c2, c3 = st.columns(3)
-            origem = c1.selectbox("Origem", ["SEMED", "Agricultura Familiar", "Fornecedor"])
-            doc_ref = c2.text_input("Nº da Nota / Guia")
-            data_r = c3.date_input("Data da Entrega", datetime.now(), format="DD/MM/YYYY")
+            if lista_escolas:
+                with st.container(border=True):
+                    escola_alvo = st.selectbox("🏫 Escola de Destino:", lista_escolas)
+                    id_alvo = df_esc[df_esc['Nome_Escola'] == escola_alvo]['ID_Escola'].values[0]
+                    
+                    c1, c2, c3 = st.columns(3)
+                    origem = c1.selectbox("Origem", ["SEMED", "Agricultura Familiar", "Fornecedor"])
+                    doc_ref = c2.text_input("Nº da Nota / Guia")
+                    data_r = c3.date_input("Data da Entrega", datetime.now(), format="DD/MM/YYYY")
 
-        if 'itens_semed' not in st.session_state: st.session_state.itens_semed = [{'id': 0, 'prod': None, 'qtd': 0.0, 'obs': ""}]
+                if 'itens_semed' not in st.session_state: st.session_state.itens_semed = [{'id': 0, 'prod': None, 'qtd': 0.0, 'obs': ""}]
 
-        for i, item in enumerate(st.session_state.itens_semed):
-            with st.container(border=True):
-                cp, cq, co, cd = st.columns([2.5, 1, 2, 0.5])
-                p_sel = cp.selectbox(f"Produto {i+1}", [None] + df_cat['Nome_Produto'].sort_values().tolist(), key=f"sr_p_{item['id']}")
-                st.session_state.itens_semed[i]['prod'] = p_sel
-                unid = f"Qtd ({df_cat[df_cat['Nome_Produto']==p_sel]['Unidade_Medida'].values[0]})" if p_sel else "Qtd"
-                st.session_state.itens_semed[i]['qtd'] = cq.number_input(unid, min_value=0.0, key=f"sr_q_{item['id']}")
-                st.session_state.itens_semed[i]['obs'] = co.text_input("Obs", placeholder="Fardo/Saca", key=f"sr_o_{item['id']}")
-                if len(st.session_state.itens_semed) > 1:
-                    if cd.button("❌", key=f"sr_del_{item['id']}"):
-                        st.session_state.itens_semed.pop(i)
-                        st.rerun()
+                for i, item in enumerate(st.session_state.itens_semed):
+                    with st.container(border=True):
+                        cp, cq, co, cd = st.columns([2.5, 1, 2, 0.5])
+                        p_sel = cp.selectbox(f"Produto {i+1}", [None] + df_cat['Nome_Produto'].sort_values().tolist(), key=f"sr_p_{item['id']}")
+                        st.session_state.itens_semed[i]['prod'] = p_sel
+                        unid = f"Qtd ({df_cat[df_cat['Nome_Produto']==p_sel]['Unidade_Medida'].values[0]})" if p_sel else "Qtd"
+                        st.session_state.itens_semed[i]['qtd'] = cq.number_input(unid, min_value=0.0, key=f"sr_q_{item['id']}")
+                        st.session_state.itens_semed[i]['obs'] = co.text_input("Obs", placeholder="Fardo/Saca", key=f"sr_o_{item['id']}")
+                        if len(st.session_state.itens_semed) > 1:
+                            if cd.button("❌", key=f"sr_del_{item['id']}"):
+                                st.session_state.itens_semed.pop(i)
+                                st.rerun()
 
-        if st.button("➕ Adicionar Produto"):
-            st.session_state.itens_semed.append({'id': len(st.session_state.itens_semed)+1, 'prod': None, 'qtd': 0.0, 'obs': ""})
-            st.rerun()
-
-        if st.button("✅ SALVAR DISTRIBUIÇÃO", type="primary", use_container_width=True):
-            if doc_ref:
-                lista_s = []
-                t_id = datetime.now().strftime('%y%m%d%H%M%S')
-                for idx, it in enumerate(st.session_state.itens_semed):
-                    if it['prod'] and it['qtd'] > 0:
-                        cat = df_cat[df_cat['Nome_Produto'] == it['prod']].iloc[0]
-                        lista_s.append([f"MOV-{t_id}-{idx}", data_r.strftime('%d/%m/%Y'), id_alvo, "ENTRADA", origem, escola_alvo, cat['ID_Produto'], it['qtd'], cat['Unidade_Medida'], it['obs'], email_logado, doc_ref])
-                if salvar_dados(pd.DataFrame(lista_s, columns=['ID_Movimentacao','Data_Hora','ID_Escola','Tipo_Fluxo','Origem','Destino','ID_Produto','Quantidade','Unidade_Medida','Observacao','ID_Usuario','Documento_Ref']), "db_movimentacoes", modo='append'):
-                    st.success(f"Salvo!")
-                    st.session_state.itens_semed = [{'id': 0, 'prod': None, 'qtd': 0.0, 'obs': ""}]
+                if st.button("➕ Adicionar Produto"):
+                    st.session_state.itens_semed.append({'id': len(st.session_state.itens_semed)+1, 'prod': None, 'qtd': 0.0, 'obs': ""})
                     st.rerun()
-            else:
-                st.error("Insira o Documento.")
 
-# --- 4. OPERAÇÃO: CORRIGIR NOTA ---
+                if st.button("✅ SALVAR DISTRIBUIÇÃO", type="primary", use_container_width=True):
+                    if doc_ref:
+                        lista_s = []
+                        t_id = datetime.now().strftime('%y%m%d%H%M%S')
+                        for idx, it in enumerate(st.session_state.itens_semed):
+                            if it['prod'] and it['qtd'] > 0:
+                                cat = df_cat[df_cat['Nome_Produto'] == it['prod']].iloc[0]
+                                lista_s.append([f"MOV-{t_id}-{idx}", data_r.strftime('%d/%m/%Y'), id_alvo, "ENTRADA", origem, escola_alvo, cat['ID_Produto'], it['qtd'], cat['Unidade_Medida'], it['obs'], email_logado, doc_ref])
+                        if salvar_dados(pd.DataFrame(lista_s, columns=['ID_Movimentacao','Data_Hora','ID_Escola','Tipo_Fluxo','Origem','Destino','ID_Produto','Quantidade','Unidade_Medida','Observacao','ID_Usuario','Documento_Ref']), "db_movimentacoes", modo='append'):
+                            st.success(f"Salvo!")
+                            st.session_state.itens_semed = [{'id': 0, 'prod': None, 'qtd': 0.0, 'obs': ""}]
+                            st.rerun()
+                    else:
+                        st.error("Insira o Documento.")
+            else:
+                st.warning("Nenhuma unidade escolar encontrada. Cadastre uma unidade primeiro em 'Gestão de Unidades'.")
+        else:
+            st.warning("A base de escolas está vazia. Cadastre uma unidade primeiro no menu 'Gestão de Unidades'.")
+
+    # --- 4. OPERAÇÃO: CORRIGIR NOTA ---
     elif menu == "✏️ Operação: Corrigir Nota":
         st.subheader("✏️ Suporte Técnico: Edição")
-        escola_alvo = st.selectbox("🏫 Escola Alvo:", df_esc['Nome_Escola'].sort_values().tolist())
-        id_alvo = df_esc[df_esc['Nome_Escola'] == escola_alvo]['ID_Escola'].values[0]
         
-        if 'idx_ex_sem' not in st.session_state: st.session_state.idx_ex_sem = []
-
-        if not df_mov.empty and 'ID_Escola' in df_mov.columns:
-            minhas = df_mov[df_mov['ID_Escola'] == id_alvo].copy()
-            c_f1, c_f2 = st.columns(2)
-            f_data_edit = c_f1.date_input("Período", [datetime.now() - timedelta(days=30), datetime.now()], format="DD/MM/YYYY")
-            f_tipo_edit = c_f2.multiselect("Tipo", ["ENTRADA", "SAÍDA", "TRANSFERÊNCIA"])
-
-            minhas['Documento_Ref'] = minhas['Documento_Ref'].fillna("S/N").astype(str)
-            minhas['Data_Hora'] = minhas['Data_Hora'].fillna("").astype(str)
-            minhas['ID_Lote'] = minhas['ID_Movimentacao'].astype(str).str.split('-').str[1].fillna("0")
-            minhas['DT_OBJ'] = pd.to_datetime(minhas['Data_Hora'], dayfirst=True, errors='coerce')
-
-            if len(f_data_edit) == 2: minhas = minhas[(minhas['DT_OBJ'].dt.date >= f_data_edit[0]) & (minhas['DT_OBJ'].dt.date <= f_data_edit[1])]
-            if f_tipo_edit: minhas = minhas[minhas['Tipo_Fluxo'].isin(f_tipo_edit)]
+        if not df_esc.empty and 'Nome_Escola' in df_esc.columns:
+            lista_escolas = df_esc['Nome_Escola'].dropna().sort_values().tolist()
             
-            if not minhas.empty:
-                minhas['Label'] = "Nota: " + minhas['Documento_Ref'] + " (" + minhas['Data_Hora'] + ") - Lote: " + minhas['ID_Lote']
-                sel = st.selectbox("Selecione a Nota:", [None] + sorted(minhas['Label'].unique().tolist(), reverse=True))
+            if lista_escolas:
+                escola_alvo = st.selectbox("🏫 Escola Alvo:", lista_escolas)
+                id_alvo = df_esc[df_esc['Nome_Escola'] == escola_alvo]['ID_Escola'].values[0]
                 
-                if sel:
-                    lote_id = sel.split("Lote: ")[1]
-                    itens = minhas[minhas['ID_Lote'] == lote_id].copy()
-                    itens = pd.merge(itens, df_cat[['ID_Produto', 'Nome_Produto']], on='ID_Produto', how='left')
+                if 'idx_ex_sem' not in st.session_state: st.session_state.idx_ex_sem = []
 
-                    trava = st.sidebar.checkbox("🔓 Liberar Exclusão")
-                    novos_v = []
-                    for idx, row in itens.reset_index(drop=True).iterrows():
-                        is_ex = str(row['ID_Movimentacao']) in st.session_state.idx_ex_sem
-                        with st.container(border=True):
-                            c1, c2, c3 = st.columns([3, 1, 1])
-                            c1.markdown(f"{'<s>' if is_ex else ''}**Item:** {row['Nome_Produto']}{'</s>' if is_ex else ''}", unsafe_allow_html=True)
-                            val_q = c2.number_input(f"Qtd ({row['Unidade_Medida']})", value=float(row['Quantidade']), key=f"se_q_{row['ID_Movimentacao']}", disabled=is_ex)
-                            if trava:
-                                if not is_ex:
-                                    if c3.button("🗑️", key=f"se_ex_{idx}"):
-                                        st.session_state.idx_ex_sem.append(str(row['ID_Movimentacao']))
-                                        st.rerun()
+                if not df_mov.empty and 'ID_Escola' in df_mov.columns:
+                    minhas = df_mov[df_mov['ID_Escola'] == id_alvo].copy()
+                    c_f1, c_f2 = st.columns(2)
+                    f_data_edit = c_f1.date_input("Período", [datetime.now() - timedelta(days=30), datetime.now()], format="DD/MM/YYYY")
+                    f_tipo_edit = c_f2.multiselect("Tipo", ["ENTRADA", "SAÍDA", "TRANSFERÊNCIA"])
+
+                    minhas['Documento_Ref'] = minhas['Documento_Ref'].fillna("S/N").astype(str)
+                    minhas['Data_Hora'] = minhas['Data_Hora'].fillna("").astype(str)
+                    minhas['ID_Lote'] = minhas['ID_Movimentacao'].astype(str).str.split('-').str[1].fillna("0")
+                    minhas['DT_OBJ'] = pd.to_datetime(minhas['Data_Hora'], dayfirst=True, errors='coerce')
+
+                    if len(f_data_edit) == 2: minhas = minhas[(minhas['DT_OBJ'].dt.date >= f_data_edit[0]) & (minhas['DT_OBJ'].dt.date <= f_data_edit[1])]
+                    if f_tipo_edit: minhas = minhas[minhas['Tipo_Fluxo'].isin(f_tipo_edit)]
+                    
+                    if not minhas.empty:
+                        minhas['Label'] = "Nota: " + minhas['Documento_Ref'] + " (" + minhas['Data_Hora'] + ") - Lote: " + minhas['ID_Lote']
+                        sel = st.selectbox("Selecione a Nota:", [None] + sorted(minhas['Label'].unique().tolist(), reverse=True))
+                        
+                        if sel:
+                            lote_id = sel.split("Lote: ")[1]
+                            itens = minhas[minhas['ID_Lote'] == lote_id].copy()
+                            itens = pd.merge(itens, df_cat[['ID_Produto', 'Nome_Produto']], on='ID_Produto', how='left')
+
+                            trava = st.sidebar.checkbox("🔓 Liberar Exclusão")
+                            novos_v = []
+                            for idx, row in itens.reset_index(drop=True).iterrows():
+                                is_ex = str(row['ID_Movimentacao']) in st.session_state.idx_ex_sem
+                                with st.container(border=True):
+                                    c1, c2, c3 = st.columns([3, 1, 1])
+                                    c1.markdown(f"{'<s>' if is_ex else ''}**Item:** {row['Nome_Produto']}{'</s>' if is_ex else ''}", unsafe_allow_html=True)
+                                    val_q = c2.number_input(f"Qtd ({row['Unidade_Medida']})", value=float(row['Quantidade']), key=f"se_q_{row['ID_Movimentacao']}", disabled=is_ex)
+                                    if trava:
+                                        if not is_ex:
+                                            if c3.button("🗑️", key=f"se_ex_{idx}"):
+                                                st.session_state.idx_ex_sem.append(str(row['ID_Movimentacao']))
+                                                st.rerun()
+                                        else:
+                                            if c3.button("🔄", key=f"se_un_{idx}"):
+                                                st.session_state.idx_ex_sem.remove(str(row['ID_Movimentacao']))
+                                                st.rerun()
+                                    else:
+                                        c3.write("🔒")
+                                    
+                                    if not is_ex:
+                                        l_up = row.to_dict()
+                                        l_up['Quantidade'] = val_q
+                                        novos_v.append(l_up)
+
+                            if st.button("💾 SALVAR", type="primary", use_container_width=True):
+                                saldo_atual = calcular_estoque_atual(id_alvo)
+                                dict_saldos = saldo_atual.set_index('ID_Produto')['Saldo'].to_dict() if not saldo_atual.empty else {}
+                                estoque_invalido = False
+                                mensagens_erro = []
+
+                                for mid in st.session_state.idx_ex_sem:
+                                    it_del = itens[itens['ID_Movimentacao'] == mid]
+                                    if not it_del.empty and it_del.iloc[0]['Tipo_Fluxo'] == 'ENTRADA':
+                                        prod_id = it_del.iloc[0]['ID_Produto']
+                                        qtd_removida = float(it_del.iloc[0]['Quantidade'])
+                                        if dict_saldos.get(prod_id, 0) < qtd_removida:
+                                            estoque_invalido = True
+                                            mensagens_erro.append(f"Excluir a entrada de '{it_del.iloc[0]['Nome_Produto']}' deixará o estoque negativo.")
+
+                                for l_up in novos_v:
+                                    it_orig = itens[itens['ID_Movimentacao'] == l_up['ID_Movimentacao']]
+                                    if not it_orig.empty and it_orig.iloc[0]['Tipo_Fluxo'] == 'ENTRADA':
+                                        qtd_antiga = float(it_orig.iloc[0]['Quantidade'])
+                                        qtd_nova = float(l_up['Quantidade'])
+                                        if qtd_nova < qtd_antiga:
+                                            diferenca = qtd_antiga - qtd_nova
+                                            prod_id = l_up['ID_Produto']
+                                            if dict_saldos.get(prod_id, 0) < diferenca:
+                                                estoque_invalido = True
+                                                mensagens_erro.append(f"Reduzir a entrada de '{it_orig.iloc[0]['Nome_Produto']}' deixará o estoque negativo.")
+
+                                if estoque_invalido:
+                                    for erro in mensagens_erro:
+                                        st.error(f"🚫 Ação Bloqueada: {erro}")
+                                    st.warning("Verifique se este produto já não foi consumido na unidade.")
                                 else:
-                                    if c3.button("🔄", key=f"se_un_{idx}"):
-                                        st.session_state.idx_ex_sem.remove(str(row['ID_Movimentacao']))
+                                    df_full = carregar_dados("db_movimentacoes")
+                                    ids_nota = [str(x) for x in itens['ID_Movimentacao'].tolist()]
+                                    
+                                    # --- SISTEMA DE LIXEIRA (ENVIANDO EXCLUÍDOS) ---
+                                    if st.session_state.idx_ex_sem:
+                                        df_lixo = df_full[df_full['ID_Movimentacao'].astype(str).isin(st.session_state.idx_ex_sem)]
+                                        
+                                        df_teste_lixo = carregar_dados("db_lixeira")
+                                        if df_teste_lixo.empty or 'ID_Movimentacao' not in df_teste_lixo.columns:
+                                            salvar_dados(df_lixo, "db_lixeira", modo='overwrite')
+                                        else:
+                                            salvar_dados(df_lixo, "db_lixeira", modo='append')
+                                    
+                                    for mid in st.session_state.idx_ex_sem:
+                                        it_log = itens[itens['ID_Movimentacao'] == mid]
+                                        if not it_log.empty:
+                                            registrar_log(email_logado, "EXCLUSÃO_SUPORTE", it_log.iloc[0]['Documento_Ref'], it_log.iloc[0]['Nome_Produto'], it_log.iloc[0]['Quantidade'])
+                                    
+                                    df_r = df_full[~df_full['ID_Movimentacao'].astype(str).isin(ids_nota)]
+                                    df_n = pd.DataFrame(novos_v).drop(columns=['Nome_Produto', 'Label', 'ID_Lote', 'DT_OBJ', 'index'], errors='ignore')
+                                    if salvar_dados(pd.concat([df_r, df_n]).fillna(""), "db_movimentacoes", modo='overwrite'):
+                                        st.session_state.idx_ex_sem = []
+                                        st.success("Atualizado!")
                                         st.rerun()
-                            else:
-                                c3.write("🔒")
-                            
-                            if not is_ex:
-                                l_up = row.to_dict()
-                                l_up['Quantidade'] = val_q
-                                novos_v.append(l_up)
-
-                    if st.button("💾 SALVAR", type="primary", use_container_width=True):
-                        # --- MOTOR DE PROTEÇÃO DE ESTOQUE NEGATIVO RETROATIVO ---
-                        saldo_atual = calcular_estoque_atual(id_alvo)
-                        dict_saldos = saldo_atual.set_index('ID_Produto')['Saldo'].to_dict() if not saldo_atual.empty else {}
-                        estoque_invalido = False
-                        mensagens_erro = []
-
-                        for mid in st.session_state.idx_ex_sem:
-                            it_del = itens[itens['ID_Movimentacao'] == mid]
-                            if not it_del.empty and it_del.iloc[0]['Tipo_Fluxo'] == 'ENTRADA':
-                                prod_id = it_del.iloc[0]['ID_Produto']
-                                qtd_removida = float(it_del.iloc[0]['Quantidade'])
-                                if dict_saldos.get(prod_id, 0) < qtd_removida:
-                                    estoque_invalido = True
-                                    mensagens_erro.append(f"Excluir a entrada de '{it_del.iloc[0]['Nome_Produto']}' deixará o estoque negativo.")
-
-                        for l_up in novos_v:
-                            it_orig = itens[itens['ID_Movimentacao'] == l_up['ID_Movimentacao']]
-                            if not it_orig.empty and it_orig.iloc[0]['Tipo_Fluxo'] == 'ENTRADA':
-                                qtd_antiga = float(it_orig.iloc[0]['Quantidade'])
-                                qtd_nova = float(l_up['Quantidade'])
-                                if qtd_nova < qtd_antiga:
-                                    diferenca = qtd_antiga - qtd_nova
-                                    prod_id = l_up['ID_Produto']
-                                    if dict_saldos.get(prod_id, 0) < diferenca:
-                                        estoque_invalido = True
-                                        mensagens_erro.append(f"Reduzir a entrada de '{it_orig.iloc[0]['Nome_Produto']}' deixará o estoque negativo.")
-
-                        if estoque_invalido:
-                            for erro in mensagens_erro:
-                                st.error(f"🚫 Ação Bloqueada: {erro}")
-                            st.warning("Verifique se este produto já não foi consumido na unidade.")
-                        else:
-                            df_full = carregar_dados("db_movimentacoes")
-                            ids_nota = [str(x) for x in itens['ID_Movimentacao'].tolist()]
-                            
-                            # --- SISTEMA DE LIXEIRA (ENVIANDO EXCLUÍDOS) ---
-                            if st.session_state.idx_ex_sem:
-                                df_lixo = df_full[df_full['ID_Movimentacao'].astype(str).isin(st.session_state.idx_ex_sem)]
-                                
-                                # Vacina: Verifica se a lixeira está crua/vazia para criar o cabeçalho
-                                df_teste_lixo = carregar_dados("db_lixeira")
-                                if df_teste_lixo.empty or 'ID_Movimentacao' not in df_teste_lixo.columns:
-                                    salvar_dados(df_lixo, "db_lixeira", modo='overwrite')
-                                else:
-                                    salvar_dados(df_lixo, "db_lixeira", modo='append')
-                            
-                            for mid in st.session_state.idx_ex_sem:
-                                it_log = itens[itens['ID_Movimentacao'] == mid]
-                                if not it_log.empty:
-                                    registrar_log(email_logado, "EXCLUSÃO_SUPORTE", it_log.iloc[0]['Documento_Ref'], it_log.iloc[0]['Nome_Produto'], it_log.iloc[0]['Quantidade'])
-                            
-                            df_r = df_full[~df_full['ID_Movimentacao'].astype(str).isin(ids_nota)]
-                            df_n = pd.DataFrame(novos_v).drop(columns=['Nome_Produto', 'Label', 'ID_Lote', 'DT_OBJ', 'index'], errors='ignore')
-                            if salvar_dados(pd.concat([df_r, df_n]).fillna(""), "db_movimentacoes", modo='overwrite'):
-                                st.session_state.idx_ex_sem = []
-                                st.success("Atualizado!")
-                                st.rerun()
+                    else:
+                        st.warning("Nenhum lançamento nos filtros.")
+                else:
+                    st.warning("Base vazia.")
             else:
-                st.warning("Nenhum lançamento nos filtros.")
+                st.warning("Nenhuma unidade escolar encontrada. Cadastre uma unidade primeiro em 'Gestão de Unidades'.")
         else:
-            st.warning("Base vazia.")
+            st.warning("A base de escolas está vazia. Cadastre uma unidade primeiro no menu 'Gestão de Unidades'.")
 
     # --- 5. OPERAÇÃO: CONSUMO ---
     elif menu == "🍳 Operação: Consumo Escolar":
         st.subheader("🍳 Registrar Baixa / Consumo de Escola")
-        escola_alvo = st.selectbox("🏫 Escola Alvo da Baixa:", df_esc['Nome_Escola'].sort_values().tolist())
-        id_alvo = df_esc[df_esc['Nome_Escola'] == escola_alvo]['ID_Escola'].values[0]
         
-        saldo_df = calcular_estoque_atual(id_alvo)
-        c1, c2 = st.columns(2)
-        p_u = c1.selectbox("Produto Utilizado", df_cat['Nome_Produto'].sort_values().tolist())
-        cat_u = df_cat[df_cat['Nome_Produto'] == p_u].iloc[0]
-        
-        s_item = 0.0
-        if not saldo_df.empty:
-            m = saldo_df[saldo_df['ID_Produto'] == cat_u['ID_Produto']]
-            if not m.empty: s_item = m.iloc[0]['Saldo']
-        
-        c1.info(f"💡 Saldo na {escola_alvo}: **{s_item} {cat_u['Unidade_Medida']}**")
-        q_u = c1.number_input(f"Qtd Baixa ({cat_u['Unidade_Medida']})", min_value=0.01, max_value=float(s_item) if s_item > 0 else 0.01)
-        d_u = c2.date_input("Data do Consumo", datetime.now(), format="DD/MM/YYYY")
-        o_u = c2.text_input("Finalidade")
-        
-        if st.button("Confirmar Baixa", type="primary", use_container_width=True):
-            if q_u > 0 and q_u <= s_item:
-                df_s = pd.DataFrame([[f"SAI-{datetime.now().strftime('%H%M%S')}", d_u.strftime('%d/%m/%Y'), id_alvo, "SAÍDA", escola_alvo, "CONSUMO INTERNO", cat_u['ID_Produto'], q_u, cat_u['Unidade_Medida'], o_u, email_logado, "BAIXA SEMED"]], 
-                                    columns=['ID_Movimentacao','Data_Hora','ID_Escola','Tipo_Fluxo','Origem','Destino','ID_Produto','Quantidade','Unidade_Medida','Observacao','ID_Usuario','Documento_Ref'])
-                salvar_dados(df_s, "db_movimentacoes", modo='append')
-                st.success("Baixa Executada!")
-                st.rerun()
+        if not df_esc.empty and 'Nome_Escola' in df_esc.columns:
+            lista_escolas = df_esc['Nome_Escola'].dropna().sort_values().tolist()
+            
+            if lista_escolas:
+                escola_alvo = st.selectbox("🏫 Escola Alvo da Baixa:", lista_escolas)
+                id_alvo = df_esc[df_esc['Nome_Escola'] == escola_alvo]['ID_Escola'].values[0]
+                
+                saldo_df = calcular_estoque_atual(id_alvo)
+                c1, c2 = st.columns(2)
+                p_u = c1.selectbox("Produto Utilizado", df_cat['Nome_Produto'].sort_values().tolist())
+                cat_u = df_cat[df_cat['Nome_Produto'] == p_u].iloc[0]
+                
+                s_item = 0.0
+                if not saldo_df.empty:
+                    m = saldo_df[saldo_df['ID_Produto'] == cat_u['ID_Produto']]
+                    if not m.empty: s_item = m.iloc[0]['Saldo']
+                
+                c1.info(f"💡 Saldo na {escola_alvo}: **{s_item} {cat_u['Unidade_Medida']}**")
+                q_u = c1.number_input(f"Qtd Baixa ({cat_u['Unidade_Medida']})", min_value=0.01, max_value=float(s_item) if s_item > 0 else 0.01)
+                d_u = c2.date_input("Data do Consumo", datetime.now(), format="DD/MM/YYYY")
+                o_u = c2.text_input("Finalidade")
+                
+                if st.button("Confirmar Baixa", type="primary", use_container_width=True):
+                    if q_u > 0 and q_u <= s_item:
+                        df_s = pd.DataFrame([[f"SAI-{datetime.now().strftime('%H%M%S')}", d_u.strftime('%d/%m/%Y'), id_alvo, "SAÍDA", escola_alvo, "CONSUMO INTERNO", cat_u['ID_Produto'], q_u, cat_u['Unidade_Medida'], o_u, email_logado, "BAIXA SEMED"]], 
+                                            columns=['ID_Movimentacao','Data_Hora','ID_Escola','Tipo_Fluxo','Origem','Destino','ID_Produto','Quantidade','Unidade_Medida','Observacao','ID_Usuario','Documento_Ref'])
+                        salvar_dados(df_s, "db_movimentacoes", modo='append')
+                        st.success("Baixa Executada!")
+                        st.rerun()
+            else:
+                st.warning("Nenhuma unidade escolar encontrada. Cadastre uma unidade primeiro em 'Gestão de Unidades'.")
+        else:
+            st.warning("A base de escolas está vazia. Cadastre uma unidade primeiro no menu 'Gestão de Unidades'.")
 
     # --- 6. RELATÓRIOS GLOBAIS ---
     elif menu == "📜 Relatórios Globais":

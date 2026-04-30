@@ -1,7 +1,7 @@
 import streamlit as st
 import pandas as pd
 from datetime import datetime, timedelta
-from modules.database import carregar_dados, salvar_dados
+from modules.database import carregar_dados, salvar_dados, gerar_id_sequencial
 from modules.logic import calcular_estoque_atual
 
 # Tenta carregar fpdf para o PDF oficial
@@ -180,7 +180,7 @@ def renderizar_semed():
                 else: st.warning("A rede inteira está sem saldo positivo.")
         else: st.warning("Base vazia.")
 
-# --- 2. RAIO-X POR ESCOLA ---
+    # --- 2. RAIO-X POR ESCOLA ---
     elif menu == "🏫 Raio-X por Escola":
         st.subheader("🏫 Situação do Estoque")
         
@@ -574,10 +574,11 @@ def renderizar_semed():
                 n_esc_tipo = c2.selectbox("Nível de Ensino", tipos_ensino)
                 if st.form_submit_button("Cadastrar Escola"):
                     if n_esc_nome:
-                        novo_id = f"ESC-{datetime.now().strftime('%H%M%S')}"
+                        # NOVO MOTOR SEQUENCIAL APLICADO
+                        novo_id = gerar_id_sequencial("ESC", df_esc, "ID_Escola")
                         nova_e = pd.DataFrame([[novo_id, n_esc_nome, n_esc_tipo]], columns=['ID_Escola', 'Nome_Escola', 'Tipo_Escola'])
                         salvar_dados(pd.concat([df_esc, nova_e]), "db_escolas", modo='overwrite')
-                        st.success("Cadastrada!")
+                        st.success("Cadastrada com Sucesso!")
                         st.rerun()
                     else:
                         st.error("O nome é obrigatório.")
@@ -603,11 +604,15 @@ def renderizar_semed():
                 
             if st.button("✅ SALVAR LOTE DE UNIDADES", type="primary"):
                 novos = []
-                t_base = datetime.now().strftime('%H%M%S')
+                # NOVO MOTOR SEQUENCIAL APLICADO AO LOTE
+                base_id_str = gerar_id_sequencial("ESC", df_esc, "ID_Escola")
+                base_num = int(base_id_str.split('-')[1])
+                
                 for idx, it in enumerate(st.session_state.lote_esc):
                     if it['nome']:
-                        novo_id = f"ESC-{t_base}{idx}"
+                        novo_id = f"ESC-{base_num:03d}"
                         novos.append([novo_id, it['nome'], it['tipo']])
+                        base_num += 1
                         
                 if novos:
                     df_novos = pd.DataFrame(novos, columns=['ID_Escola', 'Nome_Escola', 'Tipo_Escola'])
@@ -714,9 +719,11 @@ def renderizar_semed():
                 
                 if st.form_submit_button("Salvar Usuário"):
                     if u_nome and u_email and u_senha:
-                        novo_u = pd.DataFrame([[f"USR-{datetime.now().strftime('%H%M%S')}", u_nome, u_email, u_senha, u_perfil, u_esc]], columns=['ID_Usuario', 'Nome', 'Email', 'Senha_Hash', 'Perfil', 'ID_Escola'])
+                        # NOVO MOTOR SEQUENCIAL APLICADO
+                        novo_id_u = gerar_id_sequencial("USR", df_usuarios, "ID_Usuario")
+                        novo_u = pd.DataFrame([[novo_id_u, u_nome, u_email, u_senha, u_perfil, u_esc]], columns=['ID_Usuario', 'Nome', 'Email', 'Senha_Hash', 'Perfil', 'ID_Escola'])
                         salvar_dados(pd.concat([df_usuarios, novo_u]), "db_usuarios", modo='overwrite')
-                        st.success("Cadastrado!")
+                        st.success("Cadastrado com Sucesso!")
                         st.rerun()
                     else:
                         st.error("Preencha Nome, E-mail e Senha.")
@@ -762,22 +769,24 @@ def renderizar_semed():
         with tab1:
             with st.form("f_add_cat_single"):
                 c1, c2 = st.columns(2)
-                n_id = c1.text_input("Código (ID)")
+                # NOVO MOTOR SEQUENCIAL APLICADO (Opção de deixar em branco)
+                n_id = c1.text_input("Código (Opcional - Deixe vazio para Auto)")
                 n_nome = c1.text_input("Nome do Produto")
                 n_cat = c2.selectbox("Categoria", ["Agricultura Familiar", "Alimentação Seca", "Limpeza", "Material Didático"])
                 n_un = c2.selectbox("Unidade", ["Kg", "Unid", "Pct", "Cx", "Saca", "Fardo"])
                 if st.form_submit_button("Inserir Produto"):
-                    if n_id and n_nome:
-                        salvar_dados(pd.concat([df_cat, pd.DataFrame([[n_id, n_nome, n_cat, n_un]], columns=['ID_Produto', 'Nome_Produto', 'Categoria', 'Unidade_Medida'])]), "db_catalogo", modo='overwrite')
+                    if n_nome:
+                        id_final = n_id.strip() if n_id.strip() else gerar_id_sequencial("PROD", df_cat, "ID_Produto")
+                        salvar_dados(pd.concat([df_cat, pd.DataFrame([[id_final, n_nome, n_cat, n_un]], columns=['ID_Produto', 'Nome_Produto', 'Categoria', 'Unidade_Medida'])]), "db_catalogo", modo='overwrite')
                         st.success("Atualizado!")
                         st.rerun()
 
         with tab2:
-            st.info("Adicione múltiplos produtos simultaneamente.")
+            st.info("Adicione múltiplos produtos simultaneamente. Se deixar o Cód vazio, o sistema cria para você.")
             if 'lote_cat' not in st.session_state: st.session_state.lote_cat = [{'id': 0, 'cod':'', 'nome':'', 'cat':'Alimentação Seca', 'un':'Kg'}]
             for i, item in enumerate(st.session_state.lote_cat):
                 c1, c2, c3, c4, c5 = st.columns([1.5, 3, 2, 1, 0.5])
-                st.session_state.lote_cat[i]['cod'] = c1.text_input("Cód", key=f"lc_c_{item['id']}")
+                st.session_state.lote_cat[i]['cod'] = c1.text_input("Cód (Opcional)", key=f"lc_c_{item['id']}")
                 st.session_state.lote_cat[i]['nome'] = c2.text_input("Nome", key=f"lc_n_{item['id']}")
                 st.session_state.lote_cat[i]['cat'] = c3.selectbox("Cat", ["Agricultura Familiar", "Alimentação Seca", "Limpeza", "Material Didático"], key=f"lc_ca_{item['id']}")
                 st.session_state.lote_cat[i]['un'] = c4.selectbox("Un", ["Kg", "Unid", "Pct", "Cx", "Saca", "Fardo"], key=f"lc_u_{item['id']}")
@@ -789,14 +798,26 @@ def renderizar_semed():
                 st.session_state.lote_cat.append({'id': len(st.session_state.lote_cat)+1, 'cod':'', 'nome':'', 'cat':'Alimentação Seca', 'un':'Kg'})
                 st.rerun()
             if st.button("✅ SALVAR LOTE", type="primary"):
-                novos = [[it['cod'], it['nome'], it['cat'], it['un']] for it in st.session_state.lote_cat if it['cod'] and it['nome']]
+                novos = []
+                # NOVO MOTOR SEQUENCIAL APLICADO AO LOTE
+                base_id_str = gerar_id_sequencial("PROD", df_cat, "ID_Produto")
+                base_num = int(base_id_str.split('-')[1])
+                
+                for it in st.session_state.lote_cat:
+                    if it['nome']:
+                        id_final = it['cod'].strip()
+                        if not id_final:
+                            id_final = f"PROD-{base_num:03d}"
+                            base_num += 1
+                        novos.append([id_final, it['nome'], it['cat'], it['un']])
+                        
                 if novos:
                     salvar_dados(pd.concat([df_cat, pd.DataFrame(novos, columns=['ID_Produto', 'Nome_Produto', 'Categoria', 'Unidade_Medida'])]), "db_catalogo", modo='overwrite')
                     st.success("Lote salvo!")
                     st.session_state.lote_cat = [{'id': 0, 'cod':'', 'nome':'', 'cat':'Alimentação Seca', 'un':'Kg'}]
                     st.rerun()
                 else:
-                    st.error("Preencha Códigos e Nomes.")
+                    st.error("Preencha ao menos o Nome dos produtos.")
 
     # --- 10. ADMIN: LIXEIRA ---
     elif menu == "🗑️ Lixeira / Restauração":

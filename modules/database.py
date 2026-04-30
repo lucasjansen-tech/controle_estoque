@@ -82,3 +82,29 @@ def salvar_dados(df_novo, aba_nome, modo='append'):
         except Exception as e:
             st.error(f"Falha crítica no salvamento após várias tentativas: {e}")
             return False
+def gerar_id_sequencial(prefixo, df_alvo, coluna_id):
+    """
+    Gera um ID sequencial no formato PREFIXO-001 (ex: ESC-001, USR-001).
+    """
+    if df_alvo.empty or coluna_id not in df_alvo.columns:
+        return f"{prefixo}-001"
+    
+    ids_existentes = df_alvo[coluna_id].dropna().astype(str)
+    ids_filtrados = ids_existentes[ids_existentes.str.startswith(f"{prefixo}-")]
+    
+    if ids_filtrados.empty:
+        return f"{prefixo}-001"
+        
+    numeros = []
+    for val in ids_filtrados:
+        try:
+            num = int(val.split('-')[1])
+            numeros.append(num)
+        except ValueError:
+            pass 
+            
+    if not numeros:
+        return f"{prefixo}-001"
+        
+    proximo_num = max(numeros) + 1
+    return f"{prefixo}-{proximo_num:03d}"
